@@ -123,6 +123,36 @@ class WaMorning(hass.Hass):
         self.morning = None
 
 
+class WaNight(hass.Hass):
+    """06:00: one message with alert-worthy messages that arrived at night (shadow: compare only).
+    Unlike the old automation, messages already alerted during the day are not repeated."""
+
+    def initialize(self):
+        importlib.reload(wa_core)
+        self.cfg = self.args
+        self.data_dir = self.cfg["data_dir"]
+        self.run_daily(self.run_night, self.cfg.get("time", "06:00:30"))
+        self.listen_event(self.on_prod_night, "wa_prod_night")
+        self.msg: str | None = None
+
+    def run_night(self, _kwargs):
+        p = os.path.join(self.data_dir, "queue.jsonl")
+        q = [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()] if os.path.exists(p) else []
+        self.msg = wa_core.night_alert_message([x for x in q if not x.get("alerted")])
+        # non-shadow (later): read receipts per chat, then send self.msg if not empty
+
+    def on_prod_night(self, _event, data, _kwargs):
+        prod = set(filter(None, str(data.get("msg") or "").splitlines()))
+        shadow = set(filter(None, (self.msg or "").splitlines()))
+        diffs = []
+        if self.msg is None:
+            diffs.append("shadow_missing")
+        elif prod != shadow:
+            diffs.append(f"only_shadow={len(shadow - prod)} only_prod={len(prod - shadow)} (prod repeats daytime alerts)")
+        _compare_line(self.data_dir, {"part": "night", "ok": not diffs, "diffs": diffs})
+        self.msg = None
+
+
 class WaReport(hass.Hass):
     """One Telegram message a day with the shadow comparison results."""
 
@@ -137,7 +167,8 @@ class WaReport(hass.Hass):
         parts: dict[str, list] = {}
         for l in lines:
             parts.setdefault(l.get("part", "?"), []).append(l)
-        names = {"ingest": "קליטת הודעות", "summary": "סיכומים", "daily": "מערכת 07:15", "morning": "רשימת הבוקר"}
+        names = {"ingest": "קליטת הודעות", "summary": "סיכומים", "daily": "מערכת 07:15", "morning": "רשימת הבוקר",
+                 "alert": "התראות מיידיות", "night": "התראות הלילה"}
         msg = "🔬 צל AppDaemon — השוואה יומית\n"
         if not lines:
             msg += "אין נתונים להיום (לא הגיעו הודעות / לא רץ כלום)."

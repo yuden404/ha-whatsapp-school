@@ -23,7 +23,8 @@ STATIC = {
 }
 ALLOW = {  # generic strings that are fine in code / examples
     "ai_task.generate_data", "notify.send_message", "ai_task.example", "notify.example",
-    "todo.example_queue", "todo.example_tasks", "input_text.example_groups", "input_datetime.example_last_webhook",
+    "todo.example_queue", "todo.example_tasks", "input_text.example_plan_kid_a",
+    "binary_sensor.example_shabbat_or_holiday", "input_text.example_groups", "input_datetime.example_last_webhook",
     "binary_sensor.example_waha_running", "automation.example", "calendar.example",
     # service names, not entities
     "todo.add_item", "todo.get_items", "todo.update_item", "todo.remove_item", "calendar.create_event",

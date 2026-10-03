@@ -41,7 +41,8 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
    AppDaemon loads every .yaml in its apps folder). Copy `appdaemon.yaml.example` likewise.
 3. WAHA: put a one-line file `X-Api-Key: <key>` somewhere outside the repo and set `waha_header_file`.
 4. Gemini: add the Google Generative AI integration in Home Assistant and set `ai_task_entity`.
-5. Run the unit tests locally: `pip install -r requirements-dev.txt && pytest wa_tests`.
+5. Restart AppDaemon after editing `apps.yaml`: hot reload of a changed app config can crash in AppDaemon 4.5.
+6. Run the unit tests locally: `pip install -r requirements-dev.txt && pytest wa_tests`.
 
 ## Privacy
 

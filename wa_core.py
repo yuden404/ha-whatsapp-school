@@ -353,3 +353,37 @@ def morning_message(items) -> str:
 def telegram_safe(text: str) -> str:
     """Telegram parses notify messages as Markdown: a lone _ * [ or backtick makes the send fail silently."""
     return str(text).replace("_", "-").replace("*", "×").replace("[", "(").replace("]", ")").replace(chr(96), "'")
+
+
+
+# ---------------------------------------------------------------- real-time alerts
+ALERT_ICON = {"emergency": "🚨", "signup": "📝", "urgent": "⚠️", "name": "👧"}
+ALERT_TITLE = {"emergency": "🚨 חירום — ", "signup": "📝 רשימת הרשמה — ", "urgent": "⚠️ דחוף — ", "name": "👧 הוזכר ילד — "}
+
+
+def jinja_truncate(s: str, length: int, end: str = "…", leeway: int = 5) -> str:
+    """Same result as Jinja's truncate(length, killwords=True, end, leeway=5)."""
+    s = str(s)
+    return s if len(s) <= length + leeway else s[: length - len(end)] + end
+
+
+def is_daytime(t: datetime) -> bool:
+    """Alerts and read receipts are immediate between 06:00 and 23:00, deferred to the morning otherwise."""
+    return 6 <= t.hour < 23
+
+
+def day_alert(kind: str, group_label: str, sender: str, body: str) -> dict | None:
+    if kind not in ALERT_TITLE:
+        return None
+    # .strip(): Home Assistant strips rendered templates, keep the text identical to production
+    return {"title": (ALERT_TITLE[kind] + group_label).strip(), "text": f"{sender}: {jinja_truncate(body, 300)}".strip()}
+
+
+def night_alert_message(items) -> str:
+    """Morning message for alert-worthy messages that arrived at night. items: [{"kind", "item"}]."""
+    out = ""
+    for x in items:
+        if x.get("kind") in ALERT_ICON:
+            text = x["item"].split(" | ", 1)[1] if " | " in x["item"] else x["item"]
+            out += f"{ALERT_ICON[x['kind']]} {jinja_truncate(text, 250)}\n"
+    return out.strip()

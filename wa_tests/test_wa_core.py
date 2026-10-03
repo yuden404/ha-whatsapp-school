@@ -248,3 +248,28 @@ def test_morning_message():
 def test_telegram_safe():
     s = c.telegram_safe("integration/gemini_structured_output: only_shadow [x] *y*")
     assert not any(ch in s for ch in "_*[]") and "gemini-structured-output" in s
+
+
+
+# --- alerts
+def test_jinja_truncate_matches_jinja():
+    assert c.jinja_truncate("a" * 305, 300) == "a" * 305          # within leeway
+    assert c.jinja_truncate("a" * 306, 300) == "a" * 299 + "…"
+
+
+def test_is_daytime_bounds():
+    from datetime import datetime as dt
+    assert not c.is_daytime(dt(2026, 10, 4, 5, 59)) and c.is_daytime(dt(2026, 10, 4, 6, 0))
+    assert c.is_daytime(dt(2026, 10, 4, 22, 59)) and not c.is_daytime(dt(2026, 10, 4, 23, 0))
+
+
+def test_day_alert():
+    a = c.day_alert("urgent", "כיתה", "מורה", "מחר אין לימודים")
+    assert a == {"title": "⚠️ דחוף — כיתה", "text": "מורה: מחר אין לימודים"}
+    assert c.day_alert("none", "x", "y", "z") is None
+
+
+def test_night_alert_message():
+    m = c.night_alert_message([{"kind": "urgent", "item": "111 | מורה: מחר אין גן"}, {"kind": "none", "item": "111 | x: תודה"},
+                               {"kind": "name", "item": "111 | אמא: דנה שכחה כובע"}])
+    assert m == "⚠️ מורה: מחר אין גן\n👧 אמא: דנה שכחה כובע"

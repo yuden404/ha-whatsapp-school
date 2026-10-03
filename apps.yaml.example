@@ -31,6 +31,9 @@ wa_ingest:
   alert_names: [KidA, KidB, FamilyName]    # names that trigger a real-time "your kid was mentioned" alert
   data_dir: /homeassistant/appdaemon/data
   media_root: wa_media                     # folder under /media, must be ASCII
+  alert_group_labels:                      # group name shown in real-time alerts
+    "GROUP_ID_1": "Class 2A"
+    "GROUP_ID_2": "Kindergarten parents"
   waha_url: http://waha.local:3000
   waha_header_file: /homeassistant/.waha_curl_header
   ai_task_entity: ai_task.example
@@ -52,6 +55,27 @@ wa_summary:
   group_labels:
     "GROUP_ID_1": "Class 2A teacher -> KidA"
     "GROUP_ID_2": "Kindergarten parents -> KidB"
+
+wa_morning:
+  module: wa_morning
+  class: WaMorning
+  data_dir: /homeassistant/appdaemon/data
+  tasks_todo: todo.example_tasks
+  school_calendar_sensor: sensor.example_school_calendar   # attribute elementary_vacation
+  issur_melacha_sensor: binary_sensor.example_shabbat_or_holiday
+  kids:
+    - {key: kid_a, name: KidA, school: true, pointer: input_text.example_plan_kid_a, sensor: sensor.example_weekly_plan_kid_a}
+
+wa_night:
+  module: wa_morning
+  class: WaNight
+  data_dir: /homeassistant/appdaemon/data
+
+wa_report:
+  module: wa_morning
+  class: WaReport
+  data_dir: /homeassistant/appdaemon/data
+  notify_entity: notify.example
 
 wa_publish:
   module: wa_publish

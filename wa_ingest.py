@@ -36,6 +36,8 @@ class WaIngest(hass.Hass):
         self.pending: dict[str, dict] = {}  # msg id -> {"shadow": {...}, "prod": {...}}
         self.listen_event(self.on_webhook, "wa_shadow_webhook")
         self.listen_event(self.on_prod, "wa_prod_ingest")
+        self.listen_event(self.on_prod_alert, "wa_prod_alert")
+        self.alerts: dict[str, dict] = {}  # msg id -> shadow day-alert decision
         self.log(f"WaIngest ready (shadow={self.shadow})")
 
     # ------------------------------------------------------------ webhook
@@ -66,8 +68,16 @@ class WaIngest(hass.Hass):
                     self._store_plan(p.get("from"), rel, fr)
         except Exception as e:  # noqa: BLE001
             rec["error"] = f"{type(e).__name__}: {e}"[:200]
+        daytime = wa_core.is_daytime(datetime.now())
+        label = self.cfg.get("alert_group_labels", {}).get(str(p.get("from") or "").split("@")[0], str(p.get("from") or "").split("@")[0])
+        alert = wa_core.day_alert(rec["kind"], label, sender, p.get("body") or "") if daytime else None
+        if alert:
+            self.alerts[mid] = alert
+            self.run_in(lambda _: self._alert_timeout(mid), 600)
+        # non-shadow (later): after 30-120 s send the read receipt (daytime only) and the alert
         self._enqueue({"id": mid, "ts": p.get("timestamp") or 0, "chat": p.get("from"), "sender": sender,
-                       "item": item, "ftext": ftext, "media": rec["media"], "mime": mime})
+                       "item": item, "ftext": ftext, "media": rec["media"], "mime": mime,
+                       "kind": rec["kind"], "alerted": bool(alert)})
         self._side(mid, "shadow", rec)
 
     def _enqueue(self, q: dict):
@@ -136,6 +146,29 @@ class WaIngest(hass.Hass):
         # non-shadow (later): set input_text + fire weekly_plan_update + notify
 
     # ------------------------------------------------------------ compare
+    def on_prod_alert(self, _event, data, _kwargs):
+        mid = str(data.get("id") or "")
+        s = self.alerts.pop(mid, None)
+        p = {"title": data.get("title"), "text": data.get("text")}
+        diffs = []
+        if s is None:
+            diffs.append("only_prod")
+        else:
+            if s["title"] != p["title"]:
+                diffs.append(f"title: shadow={s['title']} prod={p['title']}")
+            if s["text"] != p["text"]:
+                diffs.append("text differs")
+        self._log_compare("alert", mid, diffs)
+
+    def _alert_timeout(self, mid: str):
+        if self.alerts.pop(mid, None):
+            self._log_compare("alert", mid, ["only_shadow"])
+
+    def _log_compare(self, part: str, mid: str, diffs: list):
+        line = {"ts": datetime.now().isoformat(timespec="seconds"), "part": part, "id": mid[-24:], "ok": not diffs, "diffs": diffs}
+        with open(os.path.join(self.data_dir, "compare", f"{datetime.now():%Y-%m-%d}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
     def on_prod(self, _event, data, _kwargs):
         self._side(str(data.get("id") or ""), "prod", dict(data))
 
