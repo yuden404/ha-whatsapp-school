@@ -47,6 +47,7 @@ class WaPublish(hass.Hass):
             if not os.path.isdir(os.path.join(HERE, ".git")):
                 self._git("init", "-b", "main")
                 self._git("remote", "add", "origin", self.cfg["remote"])
+            self._git("remote", "set-url", "origin", self.cfg["remote"])  # always follow apps.yaml
             self._git("config", "user.name", self.cfg["git_name"])
             self._git("config", "user.email", self.cfg["git_email"])
             self._git("add", "-A")
@@ -58,4 +59,5 @@ class WaPublish(hass.Hass):
             out = self._git("push", "-u", "origin", "main")
             self._report("pushed", files=files, head=self._git("rev-parse", "--short", "HEAD"), output=out[-300:])
         except Exception as e:  # noqa: BLE001
-            self._report("error", error=f"{type(e).__name__}: {e}"[:400])
+            remote = self._git("remote", "-v", check=False) if os.path.isdir(os.path.join(HERE, ".git")) else ""
+            self._report("error", error=f"{type(e).__name__}: {e}"[:400], remote=remote[:200])
