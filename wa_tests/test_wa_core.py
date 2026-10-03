@@ -187,7 +187,7 @@ def test_summary_message_grouped():
              {"child": "B", "date": "", "action": "סווטשרט"}, {"child": "B", "date": "2026-10-07", "action": "תחפושת"}]
     m = c.summary_message(items, [], [], 3, "2026-10-02")
     assert m == ("📅 יום שבת 3.10 (מחר)\n• A — x\n\n📅 יום רביעי 7.10\n• A — כובע\n• B — תחפושת\n\n"
-                 "📌 בלי תאריך\n• B — סווטשרט\n")
+                 "📌 בלי תאריך\n• B — סווטשרט")
 
 
 def test_summary_message_empty_and_sections():
@@ -209,3 +209,42 @@ def test_prompts_have_no_unfilled_jinja_and_known_placeholders():
             t = open(os.path.join(pdir, fn), encoding="utf-8").read()
             assert "{{" not in t and "{%" not in t, fn
             assert set(_re.findall(r"\{([A-Z_]+)\}", t)) <= allowed, fn
+
+
+# --- morning / daily
+def test_tasks_for_kid():
+    t = [{"summary": "דנה — סרגל", "due": "2026-10-05"}, {"summary": "כולם — כובע", "due": "2026-10-05"},
+         {"summary": "רון — x", "due": "2026-10-05"}, {"summary": "דנה — y", "due": "2026-10-06"}]
+    assert c.tasks_for_kid(t, "2026-10-05", "דנה") == ["דנה — סרגל", "כולם — כובע"]
+
+
+def test_plan_active():
+    assert c.plan_active("whatsapp/a.pdf|2026-10-04|2026-10-09|t", "2026-10-05") == (True, "whatsapp/a.pdf")
+    assert c.plan_active("whatsapp/a.pdf|2026-10-04|2026-10-09", "2026-10-10")[0] is False
+    assert c.plan_active("unknown", "2026-10-05")[0] is False
+
+
+def test_daily_message_school_day():
+    e = {"date": "2026-10-05", "hours": "", "lessons": ["שעה 1: חשבון", "שעה 2: גיאומטריה"], "bring": ["סרגל"], "notes": []}
+    m = c.daily_message("דנה", "2026-10-05", e, ["דנה — חולצה לבנה"], True, True)
+    assert m["title"] == "🎒 דנה — יום שני 5.10"
+    assert m["body"] == "📚 המערכת:\n1. שעה 1: חשבון\n2. שעה 2: גיאומטריה\n\n🎒 להביא:\n• סרגל\n\n📌 מהקבוצות:\n• דנה — חולצה לבנה"
+    assert m["push"] == "🎒 סרגל\n📌 דנה — חולצה לבנה\n📚 2 שיעורים — פתח למערכת המלאה"
+
+
+def test_daily_message_no_plan_rules():
+    assert c.daily_message("דנה", "2026-10-05", None, [], False, True)["kind"] == "no_plan"
+    assert c.daily_message("דנה", "2026-10-09", None, [], False, True) is None   # Friday
+    assert c.daily_message("רון", "2026-10-05", None, [], False, False) is None  # kindergarten child
+    assert c.daily_message("דנה", "2026-10-05", None, [], True, True)["kind"] == "fail"
+    assert c.daily_message("דנה", "2026-10-05", {"no_school": True, "lessons": []}, [], True, True) is None
+
+
+def test_morning_message():
+    assert c.morning_message([{"summary": "א"}, {"summary": "ב"}]) == "• א\n• ב\n"
+
+
+
+def test_telegram_safe():
+    s = c.telegram_safe("integration/gemini_structured_output: only_shadow [x] *y*")
+    assert not any(ch in s for ch in "_*[]") and "gemini-structured-output" in s

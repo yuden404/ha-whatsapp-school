@@ -260,7 +260,7 @@ def summary_message(items, forms, events, inbox_count: int, today: str) -> str:
         for f in forms:
             due = f" (עד {day_label(f['due'], today)})" if f.get("due") else ""
             out += f"• {f.get('child')} — {f.get('title')}{due}\n  {f.get('url')}\n"
-    return out
+    return out.strip()  # identical to a rendered (stripped) Home Assistant template
 
 
 # ---------------------------------------------------------------- prompts
@@ -274,3 +274,82 @@ def load_prompt(prompt_dir: str, name: str, schema: str | None = None) -> dict:
         with open(os.path.join(prompt_dir, f"{schema}.schema.json"), encoding="utf-8") as f:
             out["structure"] = json.load(f)
     return out
+
+
+# ---------------------------------------------------------------- morning / daily schedule
+def short_date(d) -> str:
+    dd = _parse(d)
+    return f"{dd.day}.{dd.month}" if dd else ""
+
+
+def tasks_for_kid(tasks, day: str, kid_name: str) -> list[str]:
+    """Todo summaries due today that start with the kid's name or 'כולם'."""
+    rx = re.compile(r"^(" + re.escape(kid_name) + r"|כולם)")
+    return [t["summary"] for t in (tasks or []) if t.get("due") == day and rx.search(str(t.get("summary") or ""))]
+
+
+def plan_day(plan: Mapping | None, day: str) -> dict | None:
+    """The stored weekly-plan entry for the given day, or None."""
+    for d in (plan or {}).get("days") or []:
+        if d.get("date") == day:
+            return d
+    return None
+
+
+def plan_active(pointer: str, day: str) -> tuple[bool, str]:
+    """input_text pointer 'file|start|end|title' -> (covers day, file)."""
+    parts = str(pointer or "").split("|")
+    ok = len(parts) >= 3 and parts[1] <= day <= parts[2] and safe_path(parts[0])
+    return ok, parts[0] if ok else ""
+
+
+def daily_message(kid_name: str, day: str, entry: Mapping | None, today_tasks: list[str],
+                  has_plan: bool, school_child: bool, test: bool = False) -> dict | None:
+    """Port of the 07:15 message. Returns {"kind", "title", "body", "push", "telegram"} or None (nothing to send)."""
+    pre = "🧪 " if test else ""
+    wd, dm = weekday_he(day), short_date(day)
+    if not has_plan:
+        if school_child and wd != "שישי":
+            text = f"{pre}ℹ️ אין מערכת שבועית בתוקף ל{kid_name} ליום {wd} {dm} — לא התקבל קובץ מערכת בקבוצות השבוע."
+            return {"kind": "no_plan", "title": "", "body": text, "push": None, "telegram": text}
+        return None
+    if entry is None:
+        title = f"{pre}⚠️ {kid_name} — יום {wd} {dm}"
+        body = "לא הצלחתי לקרוא את המערכת להיום — הקובץ נשלח בטלגרם."
+        if today_tasks:
+            body += "\n📌 מהקבוצות:\n" + "".join(f"• {t}\n" for t in today_tasks)
+        body = body.rstrip("\n")
+        return {"kind": "fail", "title": title, "body": body, "push": body, "telegram": f"{title}\n{body}"}
+    lessons, bring, notes = entry.get("lessons") or [], entry.get("bring") or [], entry.get("notes") or []
+    if entry.get("no_school") and not lessons:
+        return None
+    title = f"{pre}🎒 {kid_name} — יום {wd} {dm}"
+    body = ""
+    if entry.get("hours"):
+        body += f"🕗 {entry['hours']}\n"
+    if lessons:
+        body += "📚 המערכת:\n" + "".join(f"{i}. {l}\n" for i, l in enumerate(lessons, 1))
+    if bring:
+        body += "\n🎒 להביא:\n" + "".join(f"• {b}\n" for b in bring)
+    if notes:
+        body += "\n📝 שים לב:\n" + "".join(f"• {n}\n" for n in notes)
+    if today_tasks:
+        body += "\n📌 מהקבוצות:\n" + "".join(f"• {t}\n" for t in today_tasks)
+    body = body.rstrip("\n")  # Home Assistant strips rendered templates; keep messages identical
+    push = (f"🎒 {', '.join(bring)}" if bring else "🎒 אין ציוד מיוחד")
+    if notes:
+        push += f"\n📝 {' · '.join(notes)}"
+    if today_tasks:
+        push += f"\n📌 {' · '.join(today_tasks)}"
+    push += f"\n📚 {len(lessons)} שיעורים — פתח למערכת המלאה"
+    return {"kind": "school", "title": title, "body": body, "push": push, "telegram": f"{title}\n\n{body}"}
+
+
+def morning_message(items) -> str:
+    return "".join(f"• {it['summary']}\n" for it in items)
+
+
+
+def telegram_safe(text: str) -> str:
+    """Telegram parses notify messages as Markdown: a lone _ * [ or backtick makes the send fail silently."""
+    return str(text).replace("_", "-").replace("*", "×").replace("[", "(").replace("]", ")").replace(chr(96), "'")

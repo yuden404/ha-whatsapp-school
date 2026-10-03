@@ -79,7 +79,7 @@ class WaSelfTest(hass.Hass):
                   " · ".join(f"{k} {v}" for k, v in summary.items())
             for g, n, _, d in failed[:10]:
                 msg += f"\n• {g}/{n} — {d[:120]}"
-            self.call_service("notify/send_message", entity_id=self.cfg["notify_entity"], message=msg)
+            self.call_service("notify/send_message", entity_id=self.cfg["notify_entity"], message=wa_core.telegram_safe(msg))
 
     # ------------------------------------------------------------ parity
     def _jinja(self, macro_call: str):
