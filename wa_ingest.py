@@ -31,8 +31,8 @@ class WaIngest(hass.Hass):
         self.shadow = bool(c.get("shadow", True))
         self.data_dir = c["data_dir"]
         os.makedirs(os.path.join(self.data_dir, "compare"), exist_ok=True)
-        with open(os.path.join(HERE, "prompts", "file_read.json"), encoding="utf-8") as f:
-            self.prompts = json.load(f)
+        pdir = os.path.join(HERE, "prompts")
+        self.prompts = {k: wa_core.load_prompt(pdir, k, "file_read") for k in ("file_read", "file_read_retry")}
         self.pending: dict[str, dict] = {}  # msg id -> {"shadow": {...}, "prod": {...}}
         self.listen_event(self.on_webhook, "wa_shadow_webhook")
         self.listen_event(self.on_prod, "wa_prod_ingest")
@@ -51,19 +51,29 @@ class WaIngest(hass.Hass):
         mid = str(p.get("id") or "")
         rec = {"id": mid, "chat": p.get("from"), "kind": wa_core.message_kind(p.get("body"), self.cfg.get("alert_names", [])),
                "media": None, "ftext_len": 0, "weekly": False, "start": "", "end": "", "ndays": 0, "error": ""}
+        sender, item = wa_core.queue_item_text(p)
+        ftext, mime = "", (p.get("media") or {}).get("mimetype") or ""
         try:
             rel = wa_core.media_rel_path(p, root=self.cfg["media_root"])
             if rel:
                 self._download(p["media"]["url"], rel)
                 rec["media"] = rel
                 fr = self._read_file(rel, p["media"]["mimetype"])
+                ftext = fr.get("text", "")
                 rec.update(ftext_len=len(fr.get("text", "")), weekly=fr["weekly"], start=fr["start"],
                            end=fr["end"], ndays=len(fr["days"]))
                 if fr["weekly"]:
                     self._store_plan(p.get("from"), rel, fr)
         except Exception as e:  # noqa: BLE001
             rec["error"] = f"{type(e).__name__}: {e}"[:200]
+        self._enqueue({"id": mid, "ts": p.get("timestamp") or 0, "chat": p.get("from"), "sender": sender,
+                       "item": item, "ftext": ftext, "media": rec["media"], "mime": mime})
         self._side(mid, "shadow", rec)
+
+    def _enqueue(self, q: dict):
+        """Shadow queue consumed by wa_summary (production uses a HA todo list)."""
+        with open(os.path.join(self.data_dir, "queue.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(q, ensure_ascii=False) + "\n")
 
     def _download(self, url: str, rel: str):
         url = url.replace("http://localhost:3000", self.cfg["waha_url"].rstrip("/"))
@@ -92,7 +102,8 @@ class WaIngest(hass.Hass):
             res = self.call_service(
                 "ai_task/generate_data", return_response=True, hass_timeout=180,
                 service_data={"entity_id": self.cfg["ai_task_entity"], "task_name": f"shadow_{key}",
-                              "instructions": pr["instructions"].replace("{today}", today),
+                              "instructions": wa_core.fill(pr["instructions"], {
+                                  "TODAY": today, "OUTPUT_LANGUAGE": self.cfg.get("output_language", "Hebrew")}),
                               "structure": pr["structure"],
                               "attachments": [{"media_content_id": f"media-source://media_source/local/{rel}",
                                                "media_content_type": mime}]})

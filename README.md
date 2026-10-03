@@ -28,7 +28,8 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
 | `wa_ingest.py` | Webhook to filter, media download, file read, weekly plan (shadow capable) |
 | `wa_selftest.py` | Unit tests, parity tests against the old Jinja implementation, live integration checks |
 | `wa_publish.py` | Publishes this folder to GitHub behind the privacy gate |
-| `prompts/` | Model instructions and output schemas |
+| `prompts/*.md` | Model instructions (English, structured: role, context, input, rules, output). Placeholders like `{TODAY}` are filled at runtime from your config, so no personal data lives in them |
+| `prompts/*.schema.json` | Output schemas for Home Assistant `ai_task` structured output |
 | `wa_tests/` | Unit tests (synthetic data only) |
 | `tools/privacy_scan.py` | Blocks any personal value from being committed |
 

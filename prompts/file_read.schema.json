@@ -1,0 +1,77 @@
+{
+ "text": {
+  "required": true,
+  "selector": {
+   "text": {
+    "multiline": true
+   }
+  }
+ },
+ "weekly_schedule": {
+  "required": true,
+  "selector": {
+   "boolean": {}
+  }
+ },
+ "start": {
+  "selector": {
+   "text": {}
+  }
+ },
+ "end": {
+  "selector": {
+   "text": {}
+  }
+ },
+ "days": {
+  "selector": {
+   "object": {
+    "multiple": true,
+    "fields": {
+     "date": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "weekday": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "no_school": {
+      "selector": {
+       "boolean": {}
+      }
+     },
+     "hours": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "lessons": {
+      "selector": {
+       "text": {
+        "multiple": true
+       }
+      }
+     },
+     "bring": {
+      "selector": {
+       "text": {
+        "multiple": true
+       }
+      }
+     },
+     "notes": {
+      "selector": {
+       "text": {
+        "multiple": true
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

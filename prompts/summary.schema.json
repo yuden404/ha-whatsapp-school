@@ -1,0 +1,131 @@
+{
+ "tasks": {
+  "required": true,
+  "selector": {
+   "object": {
+    "multiple": true,
+    "fields": {
+     "child": {
+      "required": true,
+      "selector": {
+       "select": {
+        "options": [
+         "{CHILD_OPTIONS_LIST}"
+        ]
+       }
+      }
+     },
+     "date": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "action": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "source": {
+      "selector": {
+       "text": {}
+      }
+     }
+    }
+   }
+  }
+ },
+ "forms": {
+  "selector": {
+   "object": {
+    "multiple": true,
+    "fields": {
+     "child": {
+      "required": true,
+      "selector": {
+       "select": {
+        "options": [
+         "{CHILD_OPTIONS_LIST}"
+        ]
+       }
+      }
+     },
+     "title": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "url": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "due": {
+      "selector": {
+       "text": {}
+      }
+     }
+    }
+   }
+  }
+ },
+ "events": {
+  "selector": {
+   "object": {
+    "multiple": true,
+    "fields": {
+     "child": {
+      "required": true,
+      "selector": {
+       "select": {
+        "options": [
+         "{CHILD_OPTIONS_LIST}"
+        ]
+       }
+      }
+     },
+     "title": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "date": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "start": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "end": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "location": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "parents_required": {
+      "required": true,
+      "selector": {
+       "boolean": {}
+      }
+     },
+     "evidence": {
+      "selector": {
+       "text": {}
+      }
+     }
+    }
+   }
+  }
+ }
+}

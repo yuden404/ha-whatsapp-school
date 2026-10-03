@@ -34,6 +34,24 @@ wa_ingest:
   waha_url: http://waha.local:3000
   waha_header_file: /homeassistant/.waha_curl_header
   ai_task_entity: ai_task.example
+  output_language: Hebrew
+
+wa_summary:
+  module: wa_summary
+  class: WaSummary
+  shadow: true
+  data_dir: /homeassistant/appdaemon/data
+  ai_task_entity: ai_task.example
+  tasks_todo: todo.example_tasks
+  output_language: Hebrew                  # language of everything the model writes
+  times: {evening: "21:00:00", morning: "07:30:00"}
+  family_intro: "Two kids: KidA (2nd grade) and KidB (kindergarten). Parents: ParentA and ParentB."
+  child_names: [KidA, KidB]
+  school_children: [KidA]
+  names_mention: "KidA, KidB (or FamilyName)"
+  group_labels:
+    "GROUP_ID_1": "Class 2A teacher -> KidA"
+    "GROUP_ID_2": "Kindergarten parents -> KidB"
 
 wa_publish:
   module: wa_publish

@@ -23,9 +23,13 @@ STATIC = {
 }
 ALLOW = {  # generic strings that are fine in code / examples
     "ai_task.generate_data", "notify.send_message", "ai_task.example", "notify.example",
-    "todo.example_queue", "input_text.example_groups", "input_datetime.example_last_webhook",
+    "todo.example_queue", "todo.example_tasks", "input_text.example_groups", "input_datetime.example_last_webhook",
     "binary_sensor.example_waha_running", "automation.example", "calendar.example",
+    # service names, not entities
+    "todo.add_item", "todo.get_items", "todo.update_item", "todo.remove_item", "calendar.create_event",
+    "calendar.get_events", "script.turn_on", "input_text.set_value", "automation.trigger",
 }
+NOT_PERSONAL = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")  # times like 21:00:00
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache"}
 TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ".example", ""}
 
@@ -64,6 +68,8 @@ def personal_values(apps_yaml: str) -> set[str]:
             out.add(m.group(1))
         elif v.startswith("/"):
             continue  # paths are not personal
+        elif NOT_PERSONAL.match(v):
+            continue
         elif len(v) >= 3 and not v.isdigit() or (v.isdigit() and len(v) >= 10):
             out.add(v)
     return out

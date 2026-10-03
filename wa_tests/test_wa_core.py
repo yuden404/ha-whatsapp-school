@@ -163,3 +163,49 @@ def test_media_rel_path():
     assert c.media_rel_path(p, dt(2026, 10, 2)) == "whatsapp/2026-10/wa_2026-10-02_FAKE0HASH0.pdf"
     assert c.media_rel_path({**p, "media": {"url": "u", "mimetype": "video/mp4"}}) is None
     assert c.safe_path(c.media_rel_path({**p, "media": {"url": "u", "mimetype": "image/jpeg"}}, dt(2026, 1, 1)))
+
+
+# --- summary
+def test_queue_item_text():
+    p = {"from": "111@g.us", "body": "שלום", "_data": {"notifyName": "מורה"}}
+    assert c.queue_item_text(p) == ("מורה", "111 | מורה: שלום")
+    p2 = {"from": "111@g.us", "body": "", "participant": "972500000000@c.us", "media": {"mimetype": "application/pdf"}}
+    assert c.queue_item_text(p2)[1] == "111 | 972500000000: [מדיה: application/pdf]"
+
+
+def test_task_due_undated_goes_to_next_school_day():
+    assert c.task_due({"date": ""}, "2026-10-02") == ("2026-10-04", True)
+    assert c.task_due({"date": "2026-10-07"}, "2026-10-02") == ("2026-10-07", False)
+
+
+def test_fill_keeps_json_braces():
+    assert c.fill('{"a": 1} {X}', {"X": "y"}) == '{"a": 1} y'
+
+
+def test_summary_message_grouped():
+    items = [{"child": "A", "date": "2026-10-07", "action": "כובע"}, {"child": "A", "date": "2026-10-03", "action": "x"},
+             {"child": "B", "date": "", "action": "סווטשרט"}, {"child": "B", "date": "2026-10-07", "action": "תחפושת"}]
+    m = c.summary_message(items, [], [], 3, "2026-10-02")
+    assert m == ("📅 יום שבת 3.10 (מחר)\n• A — x\n\n📅 יום רביעי 7.10\n• A — כובע\n• B — תחפושת\n\n"
+                 "📌 בלי תאריך\n• B — סווטשרט\n")
+
+
+def test_summary_message_empty_and_sections():
+    assert c.summary_message([], [], [], 5, "2026-10-02") == "אין חדש מהקבוצות (5 הודעות נבדקו)."
+    m = c.summary_message([], [{"child": "A", "title": "אישור", "url": "https://f/x", "due": "2026-10-06"}],
+                          [{"child": "A", "title": "טקס", "date": "2026-10-08", "start": "12:00", "location": ""}], 1, "2026-10-02")
+    assert "👨‍👩‍👧 נוכחות הורים" in m and "• A — טקס · יום חמישי 8.10 12:00" in m
+    assert "• A — אישור (עד יום שלישי 6.10)\n  https://f/x" in m
+
+
+# --- prompts
+def test_prompts_have_no_unfilled_jinja_and_known_placeholders():
+    import re as _re
+    pdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts")
+    allowed = {"FAMILY_INTRO", "TODAY_DMY", "TODAY_WD", "TOMORROW", "GROUP_MAP", "INBOX", "EXISTING", "FILES_NOTE",
+               "SCHOOL_CHILDREN", "NAMES_MENTION", "CHILD_OPTIONS", "OUTPUT_LANGUAGE", "TODAY", "N", "FILE_MAP"}
+    for fn in os.listdir(pdir):
+        if fn.endswith(".md"):
+            t = open(os.path.join(pdir, fn), encoding="utf-8").read()
+            assert "{{" not in t and "{%" not in t, fn
+            assert set(_re.findall(r"\{([A-Z_]+)\}", t)) <= allowed, fn

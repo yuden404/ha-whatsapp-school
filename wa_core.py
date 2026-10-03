@@ -197,3 +197,80 @@ def media_rel_path(payload: Mapping, now: datetime | None = None, root: str = "w
     hid = re.sub(r"[^A-Za-z0-9]", "", parts[2] if len(parts) > 2 else str(int((now or datetime.now()).timestamp())))
     n = now or datetime.now()
     return f"{root}/{n:%Y-%m}/wa_{n:%Y-%m-%d}_{hid[:10]}.{ext}"
+
+
+# ---------------------------------------------------------------- summary
+WEEKDAYS_HE_MON = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]  # datetime.weekday() order
+
+
+def queue_item_text(payload: Mapping) -> tuple[str, str]:
+    """(sender, 'chat_id | sender: text') exactly like the production queue item."""
+    data = payload.get("_data") or {}
+    sender = data.get("notifyName") or str(payload.get("participant") or "")
+    sender = sender.replace("@c.us", "")
+    body = str(payload.get("body") or "")
+    text = body if body else f"[מדיה: {(payload.get('media') or {}).get('mimetype') or 'קובץ'}]"
+    if len(text) > 600:
+        text = text[:599] + "…"
+    return sender, f"{str(payload.get('from') or '').split('@')[0]} | {sender}: {text}"
+
+
+def task_due(item: Mapping, today: str) -> tuple[str, bool]:
+    """(due_date, estimated). Undated items go to the next school day."""
+    d = str(item.get("date") or "")
+    return (d, False) if _ISO_DATE.match(d) else (next_school_day(today), True)
+
+
+def fill(template: str, values: Mapping[str, str]) -> str:
+    """Plain {KEY} replacement (prompts contain JSON braces, so no str.format)."""
+    for k, v in values.items():
+        template = template.replace("{" + k + "}", str(v))
+    return template
+
+
+def summary_message(items, forms, events, inbox_count: int, today: str) -> str:
+    """Port of the production summary message: grouped by day, then undated, parent events, forms."""
+    items, forms, events = items or [], forms or [], events or []
+    if not items and not forms and not events:
+        return f"אין חדש מהקבוצות ({inbox_count} הודעות נבדקו)."
+    dated = sorted([i for i in items if _ISO_DATE.match(str(i.get("date") or ""))], key=lambda i: i["date"])
+    undated = [i for i in items if i not in dated]
+    out = ""
+    seen_dates: list[str] = []
+    for it in dated:
+        if it["date"] not in seen_dates:
+            seen_dates.append(it["date"])
+    for d in seen_dates:
+        out += f"📅 {day_label(d, today)}\n"
+        out += "".join(f"• {i.get('child')} — {i.get('action')}\n" for i in dated if i["date"] == d)
+        out += "\n"
+    if undated:
+        if dated:
+            out += "📌 בלי תאריך\n"
+        out += "".join(f"• {i.get('child')} — {i.get('action')}\n" for i in undated)
+    if events:
+        out += "\n👨‍👩‍👧 נוכחות הורים — נוסף ליומן\n"
+        for e in events:
+            out += f"• {e.get('child')} — {e.get('title')} · {day_label(e['date'], today)}"
+            out += (" " + e["start"]) if e.get("start") else ""
+            out += (" · " + e["location"]) if e.get("location") else ""
+            out += "\n"
+    if forms:
+        out += "\n📝 טפסים למילוי\n"
+        for f in forms:
+            due = f" (עד {day_label(f['due'], today)})" if f.get("due") else ""
+            out += f"• {f.get('child')} — {f.get('title')}{due}\n  {f.get('url')}\n"
+    return out
+
+
+# ---------------------------------------------------------------- prompts
+def load_prompt(prompt_dir: str, name: str, schema: str | None = None) -> dict:
+    """prompts/<name>.md (+ optional prompts/<schema>.schema.json) -> {"instructions", "structure"}."""
+    import json
+    import os
+    with open(os.path.join(prompt_dir, f"{name}.md"), encoding="utf-8") as f:
+        out = {"instructions": f.read()}
+    if schema:
+        with open(os.path.join(prompt_dir, f"{schema}.schema.json"), encoding="utf-8") as f:
+            out["structure"] = json.load(f)
+    return out
