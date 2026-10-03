@@ -1,0 +1,16 @@
+# AppDaemon add-on config (appdaemon.yaml). Coordinates are yours; keep this file out of the repo.
+appdaemon:
+  latitude: 0.0
+  longitude: 0.0
+  elevation: 0
+  time_zone: Asia/Jerusalem
+  plugins:
+    HASS:
+      type: hass
+http:
+  url: http://127.0.0.1:5050
+admin:
+api:
+logs:
+  main_log:
+    filename: STDOUT

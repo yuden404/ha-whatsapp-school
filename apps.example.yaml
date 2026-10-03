@@ -1,0 +1,45 @@
+# Copy to <appdaemon>/apps/apps.yaml (OUTSIDE this repo folder) and fill in your own values.
+# Everything personal lives there; tools/privacy_scan.py blocks any of these values from the repo.
+
+wa_selftest:
+  module: wa_selftest
+  class: WaSelfTest
+  start_delay: 20
+  notify_always: false
+  notify_entity: notify.example            # Telegram / mobile notify entity
+  groups:                                  # WhatsApp group id (without @g.us) -> child key
+    "GROUP_ID_1": kid_a
+    "GROUP_ID_2": kid_b
+  groups_helper: input_text.example_groups # optional extra group ids, comma separated
+  last_webhook_helper: input_datetime.example_last_webhook
+  queue_todo: todo.example_queue
+  waha_running: binary_sensor.example_waha_running
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header   # one line: "X-Api-Key: <key>"
+  ai_task_entity: ai_task.example
+  weekly_sensors: []
+  automations: []
+
+wa_ingest:
+  module: wa_ingest
+  class: WaIngest
+  shadow: true                             # run next to an existing pipeline, compare, never act
+  groups:
+    "GROUP_ID_1": kid_a
+    "GROUP_ID_2": kid_b
+  groups_helper: input_text.example_groups
+  alert_names: [KidA, KidB, FamilyName]    # names that trigger a real-time "your kid was mentioned" alert
+  data_dir: /homeassistant/appdaemon/data
+  media_root: wa_media                     # folder under /media, must be ASCII
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+  ai_task_entity: ai_task.example
+
+wa_publish:
+  module: wa_publish
+  class: WaPublish
+  apps_yaml: /homeassistant/appdaemon/apps/apps.yaml
+  deploy_key: /homeassistant/.github_deploy/id_ed25519
+  remote: git@github.com:<you>/<repo>.git
+  git_name: <you>
+  git_email: <you>@users.noreply.github.com

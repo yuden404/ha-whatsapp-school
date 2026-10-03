@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# personal config never lives in this folder, but just in case:
+apps.yaml
+secrets.yaml
+*.local.yaml
+.env
+data/
