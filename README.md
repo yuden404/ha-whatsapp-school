@@ -35,8 +35,9 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
 ## Setup
 
 1. Install the AppDaemon add-on and point its `apps` folder at a directory you control.
-2. Copy `apps.example.yaml` to `apps/apps.yaml` **outside this folder** and fill in your own
-   group ids, names and entities. Copy `appdaemon.example.yaml` likewise.
+2. Copy `apps.yaml.example` to `apps/apps.yaml` **outside this folder** and fill in your own
+   group ids, names and entities (the example files are not named .yaml on purpose:
+   AppDaemon loads every .yaml in its apps folder). Copy `appdaemon.yaml.example` likewise.
 3. WAHA: put a one-line file `X-Api-Key: <key>` somewhere outside the repo and set `waha_header_file`.
 4. Gemini: add the Google Generative AI integration in Home Assistant and set `ai_task_entity`.
 5. Run the unit tests locally: `pip install -r requirements-dev.txt && pytest wa_tests`.

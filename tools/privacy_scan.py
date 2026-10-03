@@ -27,7 +27,7 @@ ALLOW = {  # generic strings that are fine in code / examples
     "binary_sensor.example_waha_running", "automation.example", "calendar.example",
 }
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache"}
-TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ""}
+TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ".example", ""}
 
 
 def personal_values(apps_yaml: str) -> set[str]:
