@@ -206,7 +206,8 @@ def test_prompts_have_no_unfilled_jinja_and_known_placeholders():
                "SCHOOL_CHILDREN", "NAMES_MENTION", "CHILD_OPTIONS", "OUTPUT_LANGUAGE", "TODAY", "N", "FILE_MAP"}
     for fn in os.listdir(pdir):
         if fn.endswith(".md"):
-            t = open(os.path.join(pdir, fn), encoding="utf-8").read()
+            with open(os.path.join(pdir, fn), encoding="utf-8") as fh:
+                t = fh.read()
             assert "{{" not in t and "{%" not in t, fn
             assert set(_re.findall(r"\{([A-Z_]+)\}", t)) <= allowed, fn
 
@@ -273,3 +274,44 @@ def test_night_alert_message():
     m = c.night_alert_message([{"kind": "urgent", "item": "111 | מורה: מחר אין גן"}, {"kind": "none", "item": "111 | x: תודה"},
                                {"kind": "name", "item": "111 | אמא: דנה שכחה כובע"}])
     assert m == "⚠️ מורה: מחר אין גן\n👧 אמא: דנה שכחה כובע"
+
+
+
+# --- queue store
+def test_jsonl_queue_append_read_drop(tmp_path=None):
+    import tempfile
+    import wa_store
+    d = tempfile.mkdtemp()
+    q = wa_store.JsonlQueue(os.path.join(d, "q.jsonl"))
+    assert q.read() == []
+    q.append({"id": "1", "x": "א"})
+    q.append({"id": "2"})
+    assert [i["id"] for i in q.read()] == ["1", "2"]
+    q.drop({"1"})
+    assert [i["id"] for i in q.read()] == ["2"]
+    q.append({"id": "3"})
+    q.drop({"2", "3"})
+    assert q.read() == []
+
+
+# --- locales
+def test_english_locale_and_switch_back():
+    try:
+        c.set_locale("en")
+        m = c.daily_message("Dana", "2026-10-05", {"lessons": ["Math"], "bring": ["ruler"], "notes": []}, [], True, True)
+        assert m["title"] == "🎒 Dana — Monday 5.10" and "📚 Schedule:" in m["body"] and "🎒 Bring:" in m["body"]
+        assert c.day_label("2026-10-03", "2026-10-02") == "Saturday 3.10 (tomorrow)"
+        assert c.summary_message([], [], [], 2, "2026-10-02") == "Nothing new from the groups (2 messages checked)."
+        assert c.day_alert("urgent", "Class", "Teacher", "no school")["title"] == "⚠️ Urgent — Class"
+        # a task marked in Hebrew is still recognised as estimated after switching language
+        assert c.is_estimated("כיתה · ללא תאריך בהודעה") and c.is_estimated("x · no date in message")
+    finally:
+        c.set_locale("he")
+    assert c.day_label("2026-10-04", "2026-10-01") == "יום ראשון 4.10"
+
+
+def test_every_locale_has_the_same_keys():
+    import json
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "locales")
+    keys = {fn: set(json.load(open(os.path.join(d, fn), encoding="utf-8"))) for fn in os.listdir(d) if fn.endswith(".json")}
+    assert len(keys) >= 2 and len({frozenset(v) for v in keys.values()}) == 1, keys

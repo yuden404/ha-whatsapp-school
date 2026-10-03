@@ -8,10 +8,35 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
-WEEKDAYS_HE = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]  # Sunday-first
-ESTIMATED_MARK = "ללא תאריך בהודעה"
+# ---------------------------------------------------------------- language
+_LOCALE_DIR = __import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "locales")
+_L: dict = {}
+_ALL_MARKS: list[str] = []  # estimated-date markers of every locale, so old items are still recognised after a switch
+
+
+def set_locale(code: str = "he", locale_dir: str | None = None) -> None:
+    """Load locales/<code>.json: every user-facing string the apps produce."""
+    import json
+    import os
+    global _L, _ALL_MARKS
+    d = locale_dir or _LOCALE_DIR
+    with open(os.path.join(d, f"{code}.json"), encoding="utf-8") as f:
+        _L = json.load(f)
+    marks = []
+    for fn in os.listdir(d):
+        if fn.endswith(".json"):
+            with open(os.path.join(d, fn), encoding="utf-8") as f:
+                marks.append(json.load(f).get("estimated_mark", ""))
+    _ALL_MARKS = [m for m in marks if m]
+
+
+def T(key: str, **kw) -> str:
+    return _L[key].format(**kw) if kw else _L[key]
+
+
+set_locale("he")
 
 _PARENS = re.compile(r"\(.*?\)")
 _BOOK_PREFIX = re.compile(r"^(ספר|חוברת|חוברות)\s+")
@@ -24,8 +49,8 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 def monitored_groups(groups: Mapping[str, str], extra: str | None = "") -> list[str]:
     """Fixed groups from config ∪ comma-separated extra ids (e.g. an input_text)."""
     out: list[str] = []
-    for gid in list(groups.keys()) + str(extra or "").split(","):
-        gid = str(gid).strip()
+    for raw in list(groups.keys()) + str(extra or "").split(","):
+        gid = str(raw).strip()
         if gid and gid not in out:
             out.append(gid)
     return out
@@ -58,7 +83,7 @@ def dedupe(items: Iterable[str] | None) -> list[str]:
     xs = [str(x).strip() for x in items if str(x).strip()]
     keys = [norm(x) for x in xs]
     out, seen = [], set()
-    for i, k in enumerate(keys):
+    for k in keys:
         if not k or k in seen:
             continue
         if len(k) >= 3 and any(k2 != k and k in k2 for k2 in keys):
@@ -84,7 +109,7 @@ def _parse(d) -> date | None:
 
 def weekday_he(d) -> str:
     dd = _parse(d)
-    return WEEKDAYS_HE[(dd.weekday() + 1) % 7] if dd else ""
+    return _L["weekdays"][(dd.weekday() + 1) % 7] if dd else ""
 
 
 def day_label(d, ref=None) -> str:
@@ -93,8 +118,8 @@ def day_label(d, ref=None) -> str:
     if not dd:
         return ""
     r = _parse(ref) or date.today()
-    rel = " (היום)" if dd == r else " (מחר)" if dd == r + timedelta(days=1) else ""
-    return f"יום {weekday_he(dd)} {dd.day}.{dd.month}{rel}"
+    rel = T("rel_today") if dd == r else T("rel_tomorrow") if dd == r + timedelta(days=1) else ""
+    return T("day_label", weekday=weekday_he(dd), date=f"{dd.day}.{dd.month}", rel=rel)
 
 
 def next_school_day(ref=None) -> str:
@@ -105,6 +130,16 @@ def next_school_day(ref=None) -> str:
     return n.isoformat()
 
 
+def is_estimated(description) -> bool:
+    """Was this task's date guessed (no date in the message)? Recognises the marker of every locale."""
+    d = str(description or "")
+    return any(m in d for m in _ALL_MARKS)
+
+
+def estimated_mark() -> str:
+    return T("estimated_mark")
+
+
 def morning_items(items, day: str, no_school: bool) -> list[dict]:
     """No-school day: only items explicitly dated today.
     School day: today's items + estimated-date items whose date passed (carry over)."""
@@ -113,7 +148,7 @@ def morning_items(items, day: str, no_school: bool) -> list[dict]:
         due = it.get("due")
         if not due:
             continue
-        est = ESTIMATED_MARK in str(it.get("description") or "")
+        est = is_estimated(it.get("description"))
         if (due == day and not (no_school and est)) or (not no_school and est and due < day):
             out.append(it)
     return out
@@ -200,16 +235,13 @@ def media_rel_path(payload: Mapping, now: datetime | None = None, root: str = "w
 
 
 # ---------------------------------------------------------------- summary
-WEEKDAYS_HE_MON = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"]  # datetime.weekday() order
-
-
 def queue_item_text(payload: Mapping) -> tuple[str, str]:
     """(sender, 'chat_id | sender: text') exactly like the production queue item."""
     data = payload.get("_data") or {}
     sender = data.get("notifyName") or str(payload.get("participant") or "")
     sender = sender.replace("@c.us", "")
     body = str(payload.get("body") or "")
-    text = body if body else f"[מדיה: {(payload.get('media') or {}).get('mimetype') or 'קובץ'}]"
+    text = body if body else T("media_item", mime=(payload.get("media") or {}).get("mimetype") or T("file"))
     if len(text) > 600:
         text = text[:599] + "…"
     return sender, f"{str(payload.get('from') or '').split('@')[0]} | {sender}: {text}"
@@ -232,7 +264,7 @@ def summary_message(items, forms, events, inbox_count: int, today: str) -> str:
     """Port of the production summary message: grouped by day, then undated, parent events, forms."""
     items, forms, events = items or [], forms or [], events or []
     if not items and not forms and not events:
-        return f"אין חדש מהקבוצות ({inbox_count} הודעות נבדקו)."
+        return T("summary_empty", n=inbox_count)
     dated = sorted([i for i in items if _ISO_DATE.match(str(i.get("date") or ""))], key=lambda i: i["date"])
     undated = [i for i in items if i not in dated]
     out = ""
@@ -246,19 +278,19 @@ def summary_message(items, forms, events, inbox_count: int, today: str) -> str:
         out += "\n"
     if undated:
         if dated:
-            out += "📌 בלי תאריך\n"
+            out += T("summary_undated") + "\n"
         out += "".join(f"• {i.get('child')} — {i.get('action')}\n" for i in undated)
     if events:
-        out += "\n👨‍👩‍👧 נוכחות הורים — נוסף ליומן\n"
+        out += "\n" + T("summary_events") + "\n"
         for e in events:
             out += f"• {e.get('child')} — {e.get('title')} · {day_label(e['date'], today)}"
             out += (" " + e["start"]) if e.get("start") else ""
             out += (" · " + e["location"]) if e.get("location") else ""
             out += "\n"
     if forms:
-        out += "\n📝 טפסים למילוי\n"
+        out += "\n" + T("summary_forms") + "\n"
         for f in forms:
-            due = f" (עד {day_label(f['due'], today)})" if f.get("due") else ""
+            due = T("summary_form_due", date=day_label(f["due"], today)) if f.get("due") else ""
             out += f"• {f.get('child')} — {f.get('title')}{due}\n  {f.get('url')}\n"
     return out.strip()  # identical to a rendered (stripped) Home Assistant template
 
@@ -284,7 +316,7 @@ def short_date(d) -> str:
 
 def tasks_for_kid(tasks, day: str, kid_name: str) -> list[str]:
     """Todo summaries due today that start with the kid's name or 'כולם'."""
-    rx = re.compile(r"^(" + re.escape(kid_name) + r"|כולם)")
+    rx = re.compile(r"^(" + re.escape(kid_name) + "|" + re.escape(T("everyone")) + ")")
     return [t["summary"] for t in (tasks or []) if t.get("due") == day and rx.search(str(t.get("summary") or ""))]
 
 
@@ -308,40 +340,41 @@ def daily_message(kid_name: str, day: str, entry: Mapping | None, today_tasks: l
     """Port of the 07:15 message. Returns {"kind", "title", "body", "push", "telegram"} or None (nothing to send)."""
     pre = "🧪 " if test else ""
     wd, dm = weekday_he(day), short_date(day)
+    is_friday = (_parse(day) or date.today()).weekday() == 4
     if not has_plan:
-        if school_child and wd != "שישי":
-            text = f"{pre}ℹ️ אין מערכת שבועית בתוקף ל{kid_name} ליום {wd} {dm} — לא התקבל קובץ מערכת בקבוצות השבוע."
+        if school_child and not is_friday:
+            text = T("daily_no_plan", pre=pre, kid=kid_name, weekday=wd, date=dm)
             return {"kind": "no_plan", "title": "", "body": text, "push": None, "telegram": text}
         return None
     if entry is None:
-        title = f"{pre}⚠️ {kid_name} — יום {wd} {dm}"
-        body = "לא הצלחתי לקרוא את המערכת להיום — הקובץ נשלח בטלגרם."
+        title = T("daily_fail_title", pre=pre, kid=kid_name, weekday=wd, date=dm)
+        body = T("daily_fail_body")
         if today_tasks:
-            body += "\n📌 מהקבוצות:\n" + "".join(f"• {t}\n" for t in today_tasks)
+            body += "\n" + T("daily_from_groups") + "\n" + "".join(f"• {t}\n" for t in today_tasks)
         body = body.rstrip("\n")
         return {"kind": "fail", "title": title, "body": body, "push": body, "telegram": f"{title}\n{body}"}
     lessons, bring, notes = entry.get("lessons") or [], entry.get("bring") or [], entry.get("notes") or []
     if entry.get("no_school") and not lessons:
         return None
-    title = f"{pre}🎒 {kid_name} — יום {wd} {dm}"
+    title = T("daily_title", pre=pre, kid=kid_name, weekday=wd, date=dm)
     body = ""
     if entry.get("hours"):
-        body += f"🕗 {entry['hours']}\n"
+        body += T("daily_hours", hours=entry["hours"]) + "\n"
     if lessons:
-        body += "📚 המערכת:\n" + "".join(f"{i}. {l}\n" for i, l in enumerate(lessons, 1))
+        body += T("daily_lessons") + "\n" + "".join(f"{i}. {lesson}\n" for i, lesson in enumerate(lessons, 1))
     if bring:
-        body += "\n🎒 להביא:\n" + "".join(f"• {b}\n" for b in bring)
+        body += "\n" + T("daily_bring") + "\n" + "".join(f"• {b}\n" for b in bring)
     if notes:
-        body += "\n📝 שים לב:\n" + "".join(f"• {n}\n" for n in notes)
+        body += "\n" + T("daily_notes") + "\n" + "".join(f"• {n}\n" for n in notes)
     if today_tasks:
-        body += "\n📌 מהקבוצות:\n" + "".join(f"• {t}\n" for t in today_tasks)
+        body += "\n" + T("daily_from_groups") + "\n" + "".join(f"• {t}\n" for t in today_tasks)
     body = body.rstrip("\n")  # Home Assistant strips rendered templates; keep messages identical
-    push = (f"🎒 {', '.join(bring)}" if bring else "🎒 אין ציוד מיוחד")
+    push = T("push_bring", items=", ".join(bring)) if bring else T("push_no_bring")
     if notes:
         push += f"\n📝 {' · '.join(notes)}"
     if today_tasks:
         push += f"\n📌 {' · '.join(today_tasks)}"
-    push += f"\n📚 {len(lessons)} שיעורים — פתח למערכת המלאה"
+    push += "\n" + T("push_lessons", n=len(lessons))
     return {"kind": "school", "title": title, "body": body, "push": push, "telegram": f"{title}\n\n{body}"}
 
 
@@ -358,7 +391,6 @@ def telegram_safe(text: str) -> str:
 
 # ---------------------------------------------------------------- real-time alerts
 ALERT_ICON = {"emergency": "🚨", "signup": "📝", "urgent": "⚠️", "name": "👧"}
-ALERT_TITLE = {"emergency": "🚨 חירום — ", "signup": "📝 רשימת הרשמה — ", "urgent": "⚠️ דחוף — ", "name": "👧 הוזכר ילד — "}
 
 
 def jinja_truncate(s: str, length: int, end: str = "…", leeway: int = 5) -> str:
@@ -373,10 +405,11 @@ def is_daytime(t: datetime) -> bool:
 
 
 def day_alert(kind: str, group_label: str, sender: str, body: str) -> dict | None:
-    if kind not in ALERT_TITLE:
+    titles = _L["alert_title"]
+    if kind not in titles:
         return None
     # .strip(): Home Assistant strips rendered templates, keep the text identical to production
-    return {"title": (ALERT_TITLE[kind] + group_label).strip(), "text": f"{sender}: {jinja_truncate(body, 300)}".strip()}
+    return {"title": (titles[kind] + group_label).strip(), "text": f"{sender}: {jinja_truncate(body, 300)}".strip()}
 
 
 def night_alert_message(items) -> str:

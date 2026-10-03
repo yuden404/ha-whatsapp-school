@@ -1,0 +1,41 @@
+{
+ "weekdays": [
+  "ראשון",
+  "שני",
+  "שלישי",
+  "רביעי",
+  "חמישי",
+  "שישי",
+  "שבת"
+ ],
+ "day_label": "יום {weekday} {date}{rel}",
+ "rel_today": " (היום)",
+ "rel_tomorrow": " (מחר)",
+ "estimated_mark": "ללא תאריך בהודעה",
+ "everyone": "כולם",
+ "media_item": "[מדיה: {mime}]",
+ "file": "קובץ",
+ "summary_empty": "אין חדש מהקבוצות ({n} הודעות נבדקו).",
+ "summary_undated": "📌 בלי תאריך",
+ "summary_events": "👨‍👩‍👧 נוכחות הורים — נוסף ליומן",
+ "summary_forms": "📝 טפסים למילוי",
+ "summary_form_due": " (עד {date})",
+ "daily_no_plan": "{pre}ℹ️ אין מערכת שבועית בתוקף ל{kid} ליום {weekday} {date} — לא התקבל קובץ מערכת בקבוצות השבוע.",
+ "daily_fail_title": "{pre}⚠️ {kid} — יום {weekday} {date}",
+ "daily_fail_body": "לא הצלחתי לקרוא את המערכת להיום — הקובץ נשלח בטלגרם.",
+ "daily_title": "{pre}🎒 {kid} — יום {weekday} {date}",
+ "daily_hours": "🕗 {hours}",
+ "daily_lessons": "📚 המערכת:",
+ "daily_bring": "🎒 להביא:",
+ "daily_notes": "📝 שים לב:",
+ "daily_from_groups": "📌 מהקבוצות:",
+ "push_bring": "🎒 {items}",
+ "push_no_bring": "🎒 אין ציוד מיוחד",
+ "push_lessons": "📚 {n} שיעורים — פתח למערכת המלאה",
+ "alert_title": {
+  "emergency": "🚨 חירום — ",
+  "signup": "📝 רשימת הרשמה — ",
+  "urgent": "⚠️ דחוף — ",
+  "name": "👧 הוזכר ילד — "
+ }
+}

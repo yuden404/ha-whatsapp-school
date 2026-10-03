@@ -32,6 +32,10 @@ ALLOW = {  # generic strings that are fine in code / examples
 }
 NOT_PERSONAL = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")  # times like 21:00:00
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache"}
+# apps.yaml keys whose values are settings, not personal data (module names, public GitHub identity, times, flags)
+CONFIG_KNOBS = {"module", "class", "remote", "git_name", "git_email", "shadow", "start_delay", "notify_always",
+                "times", "time", "daily_time", "morning_time", "output_language", "media_root", "data_dir",
+                "apps_yaml", "deploy_key"}
 TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ".example", ""}
 
 
@@ -58,12 +62,12 @@ def personal_values(apps_yaml: str) -> set[str]:
     for app in cfg.values():
         if isinstance(app, dict):
             for k, v in app.items():
-                if k in ("module", "class", "remote", "git_name", "git_email"):  # public GitHub identity
+                if k in CONFIG_KNOBS:
                     continue
                 walk(v, k)
     out = set()
-    for v in vals:
-        v = v.strip()
+    for raw in vals:
+        v = raw.strip()
         m = re.match(r"https?://([^/:]+)", v)
         if m:
             out.add(m.group(1))
@@ -71,7 +75,7 @@ def personal_values(apps_yaml: str) -> set[str]:
             continue  # paths are not personal
         elif NOT_PERSONAL.match(v):
             continue
-        elif len(v) >= 3 and not v.isdigit() or (v.isdigit() and len(v) >= 10):
+        elif (len(v) >= 3 and not v.isdigit()) or (v.isdigit() and len(v) >= 10):
             out.add(v)
     return out
 
@@ -87,7 +91,8 @@ def scan(repo: str, apps_yaml: str | None) -> list[str]:
                 continue
             rel = os.path.relpath(p, repo)
             try:
-                lines = open(p, encoding="utf-8").read().splitlines()
+                with open(p, encoding="utf-8") as fh:
+                    lines = fh.read().splitlines()
             except UnicodeDecodeError:
                 continue
             for i, line in enumerate(lines, 1):

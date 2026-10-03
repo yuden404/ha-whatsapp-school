@@ -22,6 +22,7 @@ import appdaemon.plugins.hass.hassapi as hass
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import wa_core  # noqa: E402
+import wa_store  # noqa: E402
 
 
 class WaIngest(hass.Hass):
@@ -29,8 +30,10 @@ class WaIngest(hass.Hass):
         importlib.reload(wa_core)
         c = self.cfg = self.args
         self.shadow = bool(c.get("shadow", True))
+        wa_core.set_locale(c.get("language", "he"))
         self.data_dir = c["data_dir"]
         os.makedirs(os.path.join(self.data_dir, "compare"), exist_ok=True)
+        self.queue = wa_store.JsonlQueue(os.path.join(self.data_dir, "queue.jsonl"))
         pdir = os.path.join(HERE, "prompts")
         self.prompts = {k: wa_core.load_prompt(pdir, k, "file_read") for k in ("file_read", "file_read_retry")}
         self.pending: dict[str, dict] = {}  # msg id -> {"shadow": {...}, "prod": {...}}
@@ -82,12 +85,12 @@ class WaIngest(hass.Hass):
 
     def _enqueue(self, q: dict):
         """Shadow queue consumed by wa_summary (production uses a HA todo list)."""
-        with open(os.path.join(self.data_dir, "queue.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(q, ensure_ascii=False) + "\n")
+        self.queue.append(q)
 
     def _download(self, url: str, rel: str):
         url = url.replace("http://localhost:3000", self.cfg["waha_url"].rstrip("/"))
-        k, v = open(self.cfg["waha_header_file"]).read().strip().split(":", 1)
+        with open(self.cfg["waha_header_file"], encoding="utf-8") as f:
+            k, v = f.read().strip().split(":", 1)
         dest = os.path.join("/media", rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         for attempt in range(2):
@@ -136,13 +139,17 @@ class WaIngest(hass.Hass):
         if not child or fr["end"] < datetime.now().strftime("%Y-%m-%d"):
             return
         path = os.path.join(self.data_dir, "weekly_plans.json")
-        plans = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+        plans = {}
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                plans = json.load(f)
         cur = plans.get(child)
         if cur and fr["start"] < cur.get("start", ""):
             return
         plans[child] = {"file": rel, "start": fr["start"], "end": fr["end"], "days": fr["days"]}
         if self.shadow:
-            json.dump(plans, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(plans, f, ensure_ascii=False, indent=1)
         # non-shadow (later): set input_text + fire weekly_plan_update + notify
 
     # ------------------------------------------------------------ compare

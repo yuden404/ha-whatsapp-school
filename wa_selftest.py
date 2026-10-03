@@ -14,7 +14,6 @@ import json
 import os
 import sys
 import time
-import traceback
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -51,11 +50,17 @@ class WaSelfTest(hass.Hass):
             results.append((group, name, bool(ok), str(detail)[:200]))
 
         # 1. unit
-        mod = importlib.import_module("wa_tests.test_wa_core")
-        importlib.reload(mod)
-        for n in sorted(dir(mod)):
-            if n.startswith("test_") and callable(getattr(mod, n)):
-                rec("unit", n, lambda f=getattr(mod, n): (f() or True, ""))
+        for modname in ("wa_tests.test_wa_core", "wa_tests.test_apps"):
+            try:
+                mod = importlib.import_module(modname)
+                importlib.reload(mod)
+            except Exception as e:  # noqa: BLE001  a broken test module is itself a failed test, not a crash
+                results.append(("unit", modname, False, f"import failed: {type(e).__name__}: {e}"[:200]))
+                continue
+            for n in sorted(dir(mod)):
+                fn = getattr(mod, n)
+                if n.startswith("test_") and callable(fn):
+                    rec("unit", n, lambda f=fn: (f() or True, ""))
 
         # 2. parity with production Jinja
         for name, fn in self._parity_cases():
@@ -132,8 +137,8 @@ class WaSelfTest(hass.Hass):
             return self.get_state(e)
 
         def waha_session():
-            hdr = open(c["waha_header_file"]).read().strip()  # "X-Api-Key: ..." kept outside the repo
-            k, v = hdr.split(":", 1)
+            with open(c["waha_header_file"], encoding="utf-8") as fh:  # "X-Api-Key: ..." kept outside the repo
+                k, v = fh.read().strip().split(":", 1)
             req = urllib.request.Request(c["waha_url"].rstrip("/") + "/api/sessions/default",
                                          headers={k.strip(): v.strip()})
             with urllib.request.urlopen(req, timeout=10) as r:
@@ -168,7 +173,7 @@ class WaSelfTest(hass.Hass):
 
         def gemini_structured():
             data = None
-            for attempt in range(2):
+            for _attempt in range(2):
                 res = self.call_service(
                     "ai_task/generate_data", return_response=True, hass_timeout=90,
                     # entity_id inside service_data: ai_task wants a string, AppDaemon would turn the kwarg into a target list

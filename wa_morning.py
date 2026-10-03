@@ -19,6 +19,7 @@ import appdaemon.plugins.hass.hassapi as hass
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import wa_core  # noqa: E402
+import wa_store  # noqa: E402
 
 
 def _compare_line(data_dir: str, line: dict):
@@ -30,6 +31,7 @@ class WaMorning(hass.Hass):
     def initialize(self):
         importlib.reload(wa_core)
         self.cfg = self.args
+        wa_core.set_locale(self.cfg.get("language", "he"))
         self.data_dir = self.cfg["data_dir"]
         self.run_daily(self.run_daily_schedule, self.cfg.get("daily_time", "07:15:20"))
         self.run_daily(self.run_morning, self.cfg.get("morning_time", "07:30:20"))
@@ -55,7 +57,10 @@ class WaMorning(hass.Hass):
             return
         tasks = self._tasks()
         path = os.path.join(self.data_dir, "weekly_plans.json")
-        shadow_plans = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+        shadow_plans = {}
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                shadow_plans = json.load(f)
         for kid in self.cfg["kids"]:
             today_tasks = wa_core.tasks_for_kid(tasks, day, kid["name"])
             active, pfile = wa_core.plan_active(self.get_state(kid["pointer"]) or "", day)
@@ -136,8 +141,7 @@ class WaNight(hass.Hass):
         self.msg: str | None = None
 
     def run_night(self, _kwargs):
-        p = os.path.join(self.data_dir, "queue.jsonl")
-        q = [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()] if os.path.exists(p) else []
+        q = wa_store.JsonlQueue(os.path.join(self.data_dir, "queue.jsonl")).read()
         self.msg = wa_core.night_alert_message([x for x in q if not x.get("alerted")])
         # non-shadow (later): read receipts per chat, then send self.msg if not empty
 
@@ -163,20 +167,23 @@ class WaReport(hass.Hass):
 
     def report(self, _kwargs):
         p = os.path.join(self.cfg["data_dir"], "compare", f"{datetime.now():%Y-%m-%d}.jsonl")
-        lines = [json.loads(l) for l in open(p, encoding="utf-8")] if os.path.exists(p) else []
+        lines = []
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                lines = [json.loads(line) for line in f if line.strip()]
         parts: dict[str, list] = {}
-        for l in lines:
-            parts.setdefault(l.get("part", "?"), []).append(l)
+        for line in lines:
+            parts.setdefault(line.get("part", "?"), []).append(line)
         names = {"ingest": "קליטת הודעות", "summary": "סיכומים", "daily": "מערכת 07:15", "morning": "רשימת הבוקר",
                  "alert": "התראות מיידיות", "night": "התראות הלילה"}
         msg = "🔬 צל AppDaemon — השוואה יומית\n"
         if not lines:
             msg += "אין נתונים להיום (לא הגיעו הודעות / לא רץ כלום)."
         for part, ls in parts.items():
-            ok = sum(1 for l in ls if l.get("ok"))
+            ok = sum(1 for x in ls if x.get("ok"))
             msg += f"\n{'✅' if ok == len(ls) else '⚠️'} {names.get(part, part)}: {ok}/{len(ls)} זהים"
-            for l in [l for l in ls if not l.get("ok")][:3]:
-                msg += "\n   • " + "; ".join(l.get("diffs") or [])[:160]
+            for bad in [x for x in ls if not x.get("ok")][:3]:
+                msg += "\n   • " + "; ".join(bad.get("diffs") or [])[:160]
         self.call_service("notify/send_message", entity_id=self.cfg["notify_entity"], message=wa_core.telegram_safe(msg))
 
 

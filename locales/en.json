@@ -1,0 +1,41 @@
+{
+ "weekdays": [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday"
+ ],
+ "day_label": "{weekday} {date}{rel}",
+ "rel_today": " (today)",
+ "rel_tomorrow": " (tomorrow)",
+ "estimated_mark": "no date in message",
+ "everyone": "everyone",
+ "media_item": "[media: {mime}]",
+ "file": "file",
+ "summary_empty": "Nothing new from the groups ({n} messages checked).",
+ "summary_undated": "📌 No date",
+ "summary_events": "👨‍👩‍👧 Parents needed — added to the calendar",
+ "summary_forms": "📝 Forms to fill",
+ "summary_form_due": " (by {date})",
+ "daily_no_plan": "{pre}ℹ️ No weekly schedule in effect for {kid} on {weekday} {date} — no schedule file arrived in the groups this week.",
+ "daily_fail_title": "{pre}⚠️ {kid} — {weekday} {date}",
+ "daily_fail_body": "Could not read today's schedule — the file was sent on Telegram.",
+ "daily_title": "{pre}🎒 {kid} — {weekday} {date}",
+ "daily_hours": "🕗 {hours}",
+ "daily_lessons": "📚 Schedule:",
+ "daily_bring": "🎒 Bring:",
+ "daily_notes": "📝 Note:",
+ "daily_from_groups": "📌 From the groups:",
+ "push_bring": "🎒 {items}",
+ "push_no_bring": "🎒 No special equipment",
+ "push_lessons": "📚 {n} lessons — open for the full schedule",
+ "alert_title": {
+  "emergency": "🚨 Emergency — ",
+  "signup": "📝 Sign-up list — ",
+  "urgent": "⚠️ Urgent — ",
+  "name": "👧 Your child was mentioned — "
+ }
+}

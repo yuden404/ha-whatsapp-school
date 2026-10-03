@@ -17,6 +17,7 @@ import appdaemon.plugins.hass.hassapi as hass
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import wa_core  # noqa: E402
+import wa_store  # noqa: E402
 
 
 class WaSummary(hass.Hass):
@@ -24,8 +25,10 @@ class WaSummary(hass.Hass):
         importlib.reload(wa_core)
         c = self.cfg = self.args
         self.shadow = bool(c.get("shadow", True))
+        wa_core.set_locale(c.get("language", "he"))
         self.data_dir = c["data_dir"]
         os.makedirs(os.path.join(self.data_dir, "summary"), exist_ok=True)
+        self.queue = wa_store.JsonlQueue(os.path.join(self.data_dir, "queue.jsonl"))
         pdir = os.path.join(HERE, "prompts")
         self.tpl = wa_core.load_prompt(pdir, "summary", "summary")
         self.tpl["files_note"] = wa_core.load_prompt(pdir, "summary_files_note")["instructions"]
@@ -36,26 +39,10 @@ class WaSummary(hass.Hass):
         self.last: dict | None = None
         self.log(f"WaSummary ready (shadow={self.shadow})")
 
-    # ------------------------------------------------------------ queue (shared format with wa_ingest)
-    def _queue_path(self):
-        return os.path.join(self.data_dir, "queue.jsonl")
-
-    def _read_queue(self) -> list[dict]:
-        p = self._queue_path()
-        if not os.path.exists(p):
-            return []
-        with open(p, encoding="utf-8") as f:
-            return [json.loads(l) for l in f if l.strip()]
-
-    def _drop_queue(self, ids: set[str]):
-        rest = [q for q in self._read_queue() if q["id"] not in ids]
-        with open(self._queue_path(), "w", encoding="utf-8") as f:
-            f.writelines(json.dumps(q, ensure_ascii=False) + "\n" for q in rest)
-
     # ------------------------------------------------------------ run
     def run_summary(self, kwargs):
         slot = kwargs.get("slot", "manual")
-        inbox = self._read_queue()
+        inbox = self.queue.read()
         if not inbox:
             return
         c, now = self.cfg, datetime.now()
@@ -89,7 +76,7 @@ class WaSummary(hass.Hass):
             sd["attachments"] = [{"media_content_id": f"media-source://media_source/local/{q['media']}",
                                   "media_content_type": q.get("mime") or "application/pdf"} for q in attach[:10]]
         data = None
-        for attempt in range(2):
+        for _attempt in range(2):
             res = self.call_service("ai_task/generate_data", return_response=True, hass_timeout=180, service_data=sd)
             data = _find_key(res, "data")
             if isinstance(data, dict) and isinstance(data.get("tasks"), list):
@@ -103,9 +90,9 @@ class WaSummary(hass.Hass):
         events = wa_core.parent_events(data.get("events"), today)
         msg = wa_core.summary_message(items, forms, events, len(inbox), today)
         out = {"slot": slot, "inbox_n": len(inbox), "items": items, "forms": forms, "events": events, "msg": msg,
-               "todo_adds": [dict(zip(("due", "estimated"), wa_core.task_due(i, today)), item=f"{i['child']} — {i['action']}") for i in items]}
+               "todo_adds": [dict(zip(("due", "estimated"), wa_core.task_due(i, today), strict=True), item=f"{i['child']} — {i['action']}") for i in items]}
         self._record(slot, out)
-        self._drop_queue({q["id"] for q in inbox})
+        self.queue.drop({q["id"] for q in inbox})
         # non-shadow (later): notify, send PDFs, todo.add_item, calendar.create_event
 
     def _inbox_line(self, q: dict) -> str:
@@ -132,7 +119,7 @@ class WaSummary(hass.Hass):
         for k in ("items", "forms", "events"):
             if isinstance(prod[k], str):
                 prod[k] = json.loads(prod[k] or "[]")
-        self.run_in(lambda _: self._compare(prod), 120)  # give the shadow run time to finish
+        self.run_in(lambda _: self._compare(prod), 240)  # the shadow run may take two model calls
 
     def _compare(self, prod: dict):
         s = self.last or {}

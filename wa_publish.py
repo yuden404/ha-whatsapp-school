@@ -29,7 +29,7 @@ class WaPublish(hass.Hass):
         env = dict(os.environ, GIT_SSH_COMMAND=(
             f"ssh -i {self.cfg['deploy_key']} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "
             f"-o UserKnownHostsFile={os.path.dirname(self.cfg['deploy_key'])}/known_hosts"))
-        r = subprocess.run(["git", *args], cwd=HERE, env=env, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(["git", *args], cwd=HERE, env=env, capture_output=True, text=True, timeout=120, check=False)
         if check and r.returncode:
             raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:300]}")
         return r.stdout.strip()

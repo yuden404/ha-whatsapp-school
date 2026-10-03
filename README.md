@@ -30,7 +30,8 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
 | `wa_publish.py` | Publishes this folder to GitHub behind the privacy gate |
 | `prompts/*.md` | Model instructions (English, structured: role, context, input, rules, output). Placeholders like `{TODAY}` are filled at runtime from your config, so no personal data lives in them |
 | `prompts/*.schema.json` | Output schemas for Home Assistant `ai_task` structured output |
-| `wa_tests/` | Unit tests (synthetic data only) |
+| `locales/` | Every user-facing string, per language (`he.json`, `en.json`). Pick with `language:` in apps.yaml |
+| `wa_tests/` | Unit tests, app tests on a fake Home Assistant (`fake_hass.py`), synthetic data only |
 | `tools/privacy_scan.py` | Blocks any personal value from being committed |
 
 ## Setup
