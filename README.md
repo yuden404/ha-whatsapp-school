@@ -7,8 +7,7 @@ a "what's in the bag today" message every morning, form links as tasks, and pare
 Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon](https://appdaemon.readthedocs.io/),
 [WAHA](https://waha.devlike.pro/) for WhatsApp and Google Gemini (via Home Assistant's `ai_task`) for understanding messages and documents.
 
-> Status: being migrated from Home Assistant YAML/Jinja to Python. New parts run in **shadow mode**
-> next to the existing pipeline and are compared before they take over.
+> Status: live since 2026-10-06. The YAML/Jinja pipeline it replaced ran in parallel for three days first, compared message by message.
 
 ## Design
 
@@ -20,12 +19,33 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
   parent events need a quote as evidence, dates and times are validated.
 - **Failures are loud.** Self-tests run after every code change and after every restart.
 
+## What runs when
+
+| When | What | Who gets it |
+|---|---|---|
+| every message | filter, download attachment, read documents and captioned images, transcribe voice notes, store a weekly schedule | — |
+| 06:00–23:00, 30–120 s after a message | WhatsApp read receipt; alert for urgent / sign-up / emergency / child mentioned | Telegram + WhatsApp contact |
+| 07:00 | overnight digest of alert-worthy messages (read receipts first) | Telegram + WhatsApp contact |
+| 07:15 | today's schedule per school child | Telegram |
+| 07:30 | one morning message: due today + new overnight | Telegram + WhatsApp contact |
+| 21:00 | evening summary (tasks, forms, parent events → task list and calendar) + PDFs | Telegram + WhatsApp contact |
+| 21:05 | tomorrow's schedule | WhatsApp contact |
+
+Media: PDFs always, images only with a caption or from a staff group, voice notes always (transcribed), video never read. A run of photos/videos from one sender becomes one line in the summary. Videos are kept a week, other files three weeks.
+
+Next: a chat assistant on the same number, see [docs/assistant-plan.md](docs/assistant-plan.md).
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `wa_core.py` | Pure logic, no HA imports: filtering, dedupe, dates, morning rules, validation |
-| `wa_ingest.py` | Webhook to filter, media download, file read, weekly plan (shadow capable) |
+| `wa_ingest.py` | Webhook → filter, media, document and voice reading, weekly plan, read receipts, alerts |
+| `wa_summary.py` | Evening and morning summaries; tasks, forms, parent events; delivery |
+| `wa_morning.py` | Schedules (07:15 / 21:05), night digest |
+| `wa_send.py`, `tools/waha_send.py` | Outbound WhatsApp (one-to-one only), read receipts |
+| `wa_store.py` | Locked JSONL queue shared by the apps |
+| `docs/` | Design notes and plans |
 | `wa_selftest.py` | Unit tests, parity tests against the old Jinja implementation, live integration checks |
 | `wa_publish.py` | Publishes this folder to GitHub behind the privacy gate |
 | `prompts/*.md` | Model instructions (English, structured: role, context, input, rules, output). Placeholders like `{TODAY}` are filled at runtime from your config, so no personal data lives in them |

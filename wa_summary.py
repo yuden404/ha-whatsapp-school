@@ -18,6 +18,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import wa_core  # noqa: E402
 import wa_store  # noqa: E402
+import wa_send  # noqa: E402
+
+
+EMPTY_OUT = {"items": [], "forms": [], "events": [], "msg": ""}
 
 
 class WaSummary(hass.Hass):
@@ -42,9 +46,13 @@ class WaSummary(hass.Hass):
     # ------------------------------------------------------------ run
     def run_summary(self, kwargs):
         slot = kwargs.get("slot", "manual")
-        inbox = self.queue.read()
-        if not inbox:
+        raw_inbox = self.queue.read()
+        morning_live = slot == "morning" and not self.shadow
+        if not raw_inbox:
+            if morning_live:  # nothing new, but the morning message still lists what is due today
+                self._deliver(slot, EMPTY_OUT, [])
             return
+        inbox = wa_core.collapse_albums(raw_inbox)  # unread photo/video runs -> one line, no model cost
         c, now = self.cfg, datetime.now()
         today = now.strftime("%Y-%m-%d")
         existing = self._existing_tasks()
@@ -62,7 +70,8 @@ class WaSummary(hass.Hass):
             "NAMES_MENTION": c["names_mention"],
             "CHILD_OPTIONS": "|".join(names + ["כולם"]),
         }
-        attach = [q for q in inbox if q.get("media") and not q.get("ftext") and wa_core.safe_path(q["media"])]
+        attach = [q for q in inbox if q.get("media") and q.get("mclass") in ("pdf", "image") and not q.get("ftext")
+                  and not q.get("_album") and wa_core.safe_path(q["media"])]
         if attach:
             vals["FILES_NOTE"] = wa_core.fill(self.tpl["files_note"], {
                 "N": str(len(attach)),
@@ -83,6 +92,10 @@ class WaSummary(hass.Hass):
                 break
             sd.pop("attachments", None)  # same fallback as production: retry without files
         if not (isinstance(data, dict) and isinstance(data.get("tasks"), list)):
+            if not self.shadow:  # never fail silently: say so, keep the queue for the next run
+                self.call_service("notify/send_message", entity_id=c["notify_entity"], message=wa_core.telegram_safe(wa_core.T("summary_failed", n=len(raw_inbox))))
+                if morning_live:
+                    self._deliver(slot, EMPTY_OUT, [])
             return self._record(slot, {"error": "gemini_failed", "inbox_n": len(inbox)})
         src = " ".join(q["item"] + " " + (q.get("ftext") or "") for q in inbox)
         items = [t for t in data["tasks"] if t.get("action")]
@@ -92,21 +105,101 @@ class WaSummary(hass.Hass):
         out = {"slot": slot, "inbox_n": len(inbox), "items": items, "forms": forms, "events": events, "msg": msg,
                "todo_adds": [dict(zip(("due", "estimated"), wa_core.task_due(i, today), strict=True), item=f"{i['child']} — {i['action']}") for i in items]}
         self._record(slot, out)
-        self.queue.drop({q["id"] for q in inbox})
-        # non-shadow (later): notify, send PDFs, todo.add_item, calendar.create_event
+        if not self.shadow:
+            self._deliver(slot, out, raw_inbox)
+        self.queue.drop({q["id"] for q in raw_inbox})
 
     def _inbox_line(self, q: dict) -> str:
         ts = datetime.fromtimestamp(q["ts"]).strftime("%d.%m %H:%M") if q.get("ts") else ""
         line = f"[{ts}] {q['item']}\n"
         if q.get("ftext"):
-            line += f"   ↳ תוכן הקובץ המצורף: {q['ftext'][:3000]}\n"
+            label = "תמלול ההודעה הקולית" if q.get("mclass") == "audio" else "תוכן הקובץ המצורף"
+            line += f"   ↳ {label}: {q['ftext'][:3000]}\n"
         return line
+
+    def _no_school(self, now: datetime) -> bool:
+        """Saturday, holiday (issur melacha) or school vacation: only explicitly dated items are listed."""
+        c = self.cfg
+        shabbat_sensor, vacation_sensor = c.get("issur_melacha_sensor"), c.get("school_calendar_sensor")
+        return (now.strftime("%w") == "6" or (bool(shabbat_sensor) and self.get_state(shabbat_sensor) == "on")
+                or (bool(vacation_sensor) and bool(self.get_state(vacation_sensor, attribute="elementary_vacation"))))
 
     def _existing_tasks(self) -> list[dict]:
         res = self.call_service("todo/get_items", return_response=True, service_data={
             "entity_id": self.cfg["tasks_todo"], "status": "needs_action"})
         items = _find_key(res, "items")
         return items if isinstance(items, list) else []
+
+    # ------------------------------------------------------------ live delivery
+    def _deliver(self, slot: str, out: dict, inbox: list[dict]):
+        c, today = self.cfg, datetime.now().strftime("%Y-%m-%d")
+        title = c.get("titles", {}).get(slot, c.get("title", "📚 סיכום מהקבוצות של הילדים"))
+        items, forms, events, msg = out["items"], out["forms"], out["events"], out["msg"]
+        # morning: ONE message = what is due today + what arrived overnight. The today list is read
+        # BEFORE the new tasks are added, so nothing shows twice.
+        new_msg = msg if (items or forms or events) else ""
+        if slot == "morning":
+            today_list = [i["summary"] for i in wa_core.morning_items(self._existing_tasks(), today, self._no_school(datetime.now()))]
+            text = wa_core.combined_morning(today_list, new_msg)
+        else:
+            text = new_msg
+        if text:
+            self.call_service("notify/send_message", entity_id=c["notify_entity"], message=wa_core.telegram_safe(f"{title}\n{text}"))
+            self._whatsapp("text", text=f"{title}\n\n{text}")
+        # documents: every PDF, and every image the model could read as a document
+        for q in inbox:
+            if not q.get("media") or not wa_core.safe_path(q["media"]):
+                continue
+            is_doc = q.get("mclass") == "pdf" or (q.get("mclass") == "image" and q.get("ftext") and not q["ftext"].startswith("[תמונה]"))
+            if not is_doc:
+                continue
+            name = (q.get("caption") or q["media"].split("/")[-1])[:80]
+            group = c["group_labels"].get(q["chat"].split("@")[0], "")
+            if c.get("telegram_config_entry"):
+                self.call_service("telegram_bot/send_document", config_entry_id=c["telegram_config_entry"],
+                                  file=f"/media/{q['media']}", caption=f"📎 {name}\n{group}")
+            self._whatsapp("file", path=f"/media/{q['media']}", caption=f"📎 {name}\n{group}")
+        # tasks
+        for it in items:
+            due, est = wa_core.task_due(it, today)
+            desc = str(it.get("source") or "") + (" · " + wa_core.estimated_mark() if est else "")
+            self.call_service("todo/add_item", entity_id=c["tasks_todo"], item=f"{it['child']} — {it['action']}", due_date=due, description=desc)
+        # forms -> tasks with the link (no duplicates by url)
+        existing = self._existing_tasks()
+        for f in forms:
+            if any(f["url"] in str(e.get("description") or "") for e in existing):
+                continue
+            due = f["due"] or (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+            self.call_service("todo/add_item", entity_id=c["tasks_todo"], item=f"{f['child']} — 📝 למלא: {f['title']}", due_date=due, description=f["url"])
+        # parent events -> calendars (no duplicates by normalised title)
+        cals = [x.strip() for x in str(self.get_state(c["calendars_helper"]) or "").split(",") if x.strip().startswith("calendar.")]
+        for e in events:
+            for cal in cals:
+                if self._event_exists(cal, e):
+                    continue
+                data = {"summary": f"👨‍👩‍👧 {e['child']}: {e['title']}", "location": e.get("location") or "",
+                        "description": "נוסף אוטומטית מקבוצות הוואטסאפ.\n" + str(e.get("evidence") or "")}
+                if e.get("start"):
+                    start = datetime.strptime(f"{e['date']} {e['start']}", "%Y-%m-%d %H:%M")
+                    end = datetime.strptime(f"{e['date']} {e['end']}", "%Y-%m-%d %H:%M") if e.get("end") else start + timedelta(hours=1)
+                    data.update(start_date_time=start.strftime("%Y-%m-%d %H:%M:00"), end_date_time=end.strftime("%Y-%m-%d %H:%M:00"))
+                else:
+                    nxt = (datetime.strptime(e["date"], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                    data.update(start_date=e["date"], end_date=nxt)
+                self.call_service("calendar/create_event", entity_id=cal, **data)
+        if c.get("last_summary_helper"):
+            self.call_service("input_text/set_value", entity_id=c["last_summary_helper"],
+                              value=f"{datetime.now():%d.%m %H:%M} · {len(items)} משימות, {len(inbox)} הודעות"[:250])
+
+    def _event_exists(self, cal: str, e: dict) -> bool:
+        res = self.call_service("calendar/get_events", return_response=True, service_data={
+            "entity_id": cal, "start_date_time": f"{e['date']} 00:00:00", "end_date_time": f"{e['date']} 23:59:59"})
+        evs = _find_key(res, "events") or []
+        k = wa_core.norm(e["title"])[:12]
+        return bool(k) and any(k in wa_core.norm(x.get("summary", "")) for x in evs)
+
+    def _whatsapp(self, mode: str, text: str = "", path: str = "", caption: str = ""):
+        wa_send.whatsapp_send(self.cfg, mode, text=text, path=path, caption=caption, log=self.log)
 
     # ------------------------------------------------------------ compare
     def _record(self, slot, out):

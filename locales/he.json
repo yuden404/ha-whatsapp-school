@@ -37,5 +37,14 @@
   "signup": "📝 רשימת הרשמה — ",
   "urgent": "⚠️ דחוף — ",
   "name": "👧 הוזכר ילד — "
- }
+ },
+ "n_photos": "{n} תמונות",
+ "one_photo": "תמונה",
+ "n_videos": "{n} סרטונים",
+ "one_video": "סרטון",
+ "audio_item": "[הודעה קולית] {text}",
+ "morning_today": "📌 להיום",
+ "morning_new": "🌙 חדש מהלילה",
+ "summary_failed": "⚠️ סיכום וואטסאפ נכשל — {n} הודעות נשארו בתור וינותחו בסיכום הבא.",
+ "daily_title_tomorrow": "{pre}🎒 {kid} — מחר, יום {weekday} {date}"
 }

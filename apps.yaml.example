@@ -23,7 +23,7 @@ wa_selftest:
 wa_ingest:
   module: wa_ingest
   class: WaIngest
-  shadow: true                             # run next to an existing pipeline, compare, never act
+  shadow: false                            # true = run next to an existing pipeline, compare, never act
   groups:
     "GROUP_ID_1": kid_a
     "GROUP_ID_2": kid_b
@@ -55,11 +55,28 @@ wa_summary:
   group_labels:
     "GROUP_ID_1": "Class 2A teacher -> KidA"
     "GROUP_ID_2": "Kindergarten parents -> KidB"
+  notify_entity: notify.example
+  whatsapp_to: "<family contact>@c.us"
+  telegram_config_entry: <telegram bot config entry id>
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+  calendars_helper: input_text.example_calendars   # comma separated calendars for parent events
+  last_summary_helper: input_text.example_last_summary
+  issur_melacha_sensor: binary_sensor.example_shabbat_or_holiday
+  school_calendar_sensor: sensor.example_school_calendar
+  titles: {evening: "📚 Evening summary", morning: "📚 Morning summary"}
 
 wa_morning:
   module: wa_morning
   class: WaMorning
   data_dir: /homeassistant/appdaemon/data
+  shadow: false
+  notify_entity: notify.example
+  whatsapp_to: "<family contact>@c.us"
+  telegram_config_entry: <telegram bot config entry id>
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+  evening_schedule_time: "21:05:00"              # tomorrow's schedule to the WhatsApp contact
   tasks_todo: todo.example_tasks
   school_calendar_sensor: sensor.example_school_calendar   # attribute elementary_vacation
   issur_melacha_sensor: binary_sensor.example_shabbat_or_holiday
@@ -69,13 +86,13 @@ wa_morning:
 wa_night:
   module: wa_morning
   class: WaNight
-  data_dir: /homeassistant/appdaemon/data
-
-wa_report:
-  module: wa_morning
-  class: WaReport
+  shadow: false
   data_dir: /homeassistant/appdaemon/data
   notify_entity: notify.example
+  alerts_to_whatsapp: true
+  whatsapp_to: "<family contact>@c.us"
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
 
 wa_publish:
   module: wa_publish

@@ -1,0 +1,10 @@
+{
+ "text": {
+  "required": true,
+  "selector": {
+   "text": {
+    "multiline": true
+   }
+  }
+ }
+}

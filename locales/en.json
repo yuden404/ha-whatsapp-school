@@ -37,5 +37,14 @@
   "signup": "📝 Sign-up list — ",
   "urgent": "⚠️ Urgent — ",
   "name": "👧 Your child was mentioned — "
- }
+ },
+ "n_photos": "{n} photos",
+ "one_photo": "photo",
+ "n_videos": "{n} videos",
+ "one_video": "video",
+ "audio_item": "[voice message] {text}",
+ "morning_today": "📌 For today",
+ "morning_new": "🌙 New overnight",
+ "summary_failed": "⚠️ WhatsApp summary failed — {n} messages stay in the queue for the next run.",
+ "daily_title_tomorrow": "{pre}🎒 {kid} — tomorrow, {weekday} {date}"
 }

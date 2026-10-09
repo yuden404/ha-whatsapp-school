@@ -39,6 +39,14 @@ CONFIG_KNOBS = {"module", "class", "remote", "git_name", "git_email", "shadow", 
 TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ".example", ""}
 
 
+def _placeholder(rule: str, value: str) -> bool:
+    """Entity ids in examples and tests are placeholders: object id 'example...' or at most 4 characters."""
+    if rule != "ha_entity":
+        return False
+    obj = value.split(".", 1)[1]
+    return obj.startswith("example") or len(obj) <= 4
+
+
 def personal_values(apps_yaml: str) -> set[str]:
     import yaml
     with open(apps_yaml, encoding="utf-8") as f:
@@ -82,6 +90,8 @@ def personal_values(apps_yaml: str) -> set[str]:
 
 def scan(repo: str, apps_yaml: str | None) -> list[str]:
     dyn = personal_values(apps_yaml) if apps_yaml and os.path.exists(apps_yaml) else set()
+    # whole-word match, so a short value like "eam" does not hit "team"
+    dyn_rx = [(v, re.compile((r"(?<!\w)" if v[0].isalnum() else "") + re.escape(v) + (r"(?!\w)" if v[-1].isalnum() else ""))) for v in dyn]
     hits = []
     for root, dirs, files in os.walk(repo):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -98,10 +108,10 @@ def scan(repo: str, apps_yaml: str | None) -> list[str]:
             for i, line in enumerate(lines, 1):
                 for name, rx in STATIC.items():
                     for m in rx.finditer(line):
-                        if m.group(0) not in ALLOW:
+                        if m.group(0) not in ALLOW and not _placeholder(name, m.group(0)):
                             hits.append(f"{rel}:{i} [{name}] {m.group(0)[:40]}")
-                for v in dyn:
-                    if v in line:
+                for v, rx in dyn_rx:
+                    if rx.search(line):
                         hits.append(f"{rel}:{i} [apps.yaml value] {v[:40]}")
     return hits
 

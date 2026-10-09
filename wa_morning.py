@@ -11,8 +11,9 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import random
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import appdaemon.plugins.hass.hassapi as hass
 
@@ -20,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import wa_core  # noqa: E402
 import wa_store  # noqa: E402
+import wa_send  # noqa: E402
 
 
 def _compare_line(data_dir: str, line: dict):
@@ -31,9 +33,11 @@ class WaMorning(hass.Hass):
     def initialize(self):
         importlib.reload(wa_core)
         self.cfg = self.args
+        self.shadow = bool(self.cfg.get("shadow", True))
         wa_core.set_locale(self.cfg.get("language", "he"))
         self.data_dir = self.cfg["data_dir"]
         self.run_daily(self.run_daily_schedule, self.cfg.get("daily_time", "07:15:20"))
+        self.run_daily(self.run_evening_schedule, self.cfg.get("evening_schedule_time", "21:05:00"))
         self.run_daily(self.run_morning, self.cfg.get("morning_time", "07:30:20"))
         self.listen_event(self.on_prod_daily, "wa_prod_daily")
         self.listen_event(self.on_prod_morning, "wa_prod_morning")
@@ -72,7 +76,44 @@ class WaMorning(hass.Hass):
             s_active = bool(sp) and sp.get("start", "") <= day <= sp.get("end", "")
             e2e = wa_core.daily_message(kid["name"], day, wa_core.plan_day(sp, day), today_tasks, s_active, kid.get("school", False))
             self.daily[kid["name"]] = {"parity": parity, "e2e": e2e, "entry": entry, "shadow_entry": wa_core.plan_day(sp, day)}
-        self.run_in(lambda _: self._daily_unmatched(), 900)
+            if not self.shadow:
+                self._send_daily(kid, e2e, sp.get("file") if sp else "")
+        if self.shadow:
+            self.run_in(lambda _: self._daily_unmatched(), 900)
+
+    def _send_daily(self, kid: dict, m: dict | None, plan_file: str):
+        """Live, 07:15: today's schedule to the parent on duty (Telegram); the file itself if it could not be read."""
+        if not m:
+            return
+        c = self.cfg
+        self.call_service("notify/send_message", entity_id=c["notify_entity"], message=wa_core.telegram_safe(m["telegram"]))
+        if m["kind"] == "fail" and plan_file and wa_core.safe_path(plan_file) and c.get("telegram_config_entry"):
+            self.call_service("telegram_bot/send_document", config_entry_id=c["telegram_config_entry"], file=f"/media/{plan_file}", caption=m["title"])
+
+    def run_evening_schedule(self, _kwargs):
+        """Live, evening: TOMORROW's schedule of each school child to the family contact on WhatsApp (not in the morning)."""
+        if self.shadow:
+            return
+        tomorrow_dt = datetime.now() + timedelta(days=1)
+        if tomorrow_dt.weekday() == 5:  # tomorrow is Saturday
+            return
+        tomorrow = tomorrow_dt.strftime("%Y-%m-%d")
+        path = os.path.join(self.data_dir, "weekly_plans.json")
+        plans = {}
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                plans = json.load(f)
+        tasks = self._tasks()
+        for kid in self.cfg["kids"]:
+            sp = plans.get(kid["key"]) or {}
+            if not kid.get("school") or not (sp and sp.get("start", "") <= tomorrow <= sp.get("end", "")):
+                continue
+            m = wa_core.daily_message(kid["name"], tomorrow, wa_core.plan_day(sp, tomorrow), wa_core.tasks_for_kid(tasks, tomorrow, kid["name"]),
+                                      True, True, tomorrow=True)
+            if m and m["kind"] == "school":
+                wa_send.whatsapp_send(self.cfg, "text", text=m["telegram"], log=self.log)
+            elif m and m["kind"] == "fail" and wa_core.safe_path(sp.get("file", "")):
+                wa_send.whatsapp_send(self.cfg, "file", path=f"/media/{sp['file']}", caption=m["title"], log=self.log)
 
     def on_prod_daily(self, _event, data, _kwargs):
         self.run_in(lambda _: self._compare_daily(dict(data)), 60)
@@ -142,8 +183,28 @@ class WaNight(hass.Hass):
 
     def run_night(self, _kwargs):
         q = wa_store.JsonlQueue(os.path.join(self.data_dir, "queue.jsonl")).read()
-        self.msg = wa_core.night_alert_message([x for x in q if not x.get("alerted")])
-        # non-shadow (later): read receipts per chat, then send self.msg if not empty
+        night = [x for x in q if not x.get("alerted")]
+        self.msg = wa_core.night_alert_message(night)
+        if self.cfg.get("shadow", True):
+            return
+        # live: read receipts for every chat with night messages (10-60 s apart, like a person), then one digest
+        chats = list(dict.fromkeys(x["chat"] for x in night if x.get("chat")))
+        for i, chat in enumerate(chats):
+            self.run_in(lambda _, ch=chat: self._seen(ch), 1 + i * random.randint(10, 60))
+        if self.msg:
+            self.run_in(lambda _: self._send_digest(), 5 + len(chats) * 60)
+
+    def _send_digest(self):
+        text = self.cfg.get("night_title", "🌙 מהלילה") + "\n" + (self.msg or "")
+        self.call_service("notify/send_message", entity_id=self.cfg["notify_entity"], message=wa_core.telegram_safe(text))
+        if self.cfg.get("alerts_to_whatsapp"):
+            wa_send.whatsapp_send(self.cfg, "text", text=text, log=self.log)
+
+    def _seen(self, chat: str):
+        try:
+            wa_send.send_seen(self.cfg, chat)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"sendSeen failed for {chat[-8:]}: {e}", level="WARNING")
 
     def on_prod_night(self, _event, data, _kwargs):
         prod = set(filter(None, str(data.get("msg") or "").splitlines()))

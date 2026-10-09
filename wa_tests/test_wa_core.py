@@ -161,7 +161,9 @@ def test_media_rel_path():
     p = {"hasMedia": True, "id": "false_111@g.us_FAKE0HASH0123456_2@lid",
          "media": {"url": "http://x/a", "mimetype": "application/pdf"}}
     assert c.media_rel_path(p, dt(2026, 10, 2)) == "whatsapp/2026-10/wa_2026-10-02_FAKE0HASH0.pdf"
-    assert c.media_rel_path({**p, "media": {"url": "u", "mimetype": "video/mp4"}}) is None
+    assert c.media_rel_path({**p, "media": {"url": "u", "mimetype": "video/mp4"}}, dt(2026, 1, 1)).endswith(".mp4")
+    assert c.media_rel_path({**p, "media": {"url": "u", "mimetype": "audio/ogg; codecs=opus"}}, dt(2026, 1, 1)).endswith(".ogg")
+    assert c.media_rel_path({**p, "media": {"url": "u", "mimetype": "application/zip"}}) is None
     assert c.safe_path(c.media_rel_path({**p, "media": {"url": "u", "mimetype": "image/jpeg"}}, dt(2026, 1, 1)))
 
 
@@ -315,3 +317,34 @@ def test_every_locale_has_the_same_keys():
     d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "locales")
     keys = {fn: set(json.load(open(os.path.join(d, fn), encoding="utf-8"))) for fn in os.listdir(d) if fn.endswith(".json")}
     assert len(keys) >= 2 and len({frozenset(v) for v in keys.values()}) == 1, keys
+
+
+
+# --- media policy / albums
+def test_media_class_and_should_read():
+    p = lambda m: {"hasMedia": True, "media": {"url": "u", "mimetype": m}}  # noqa: E731
+    assert c.media_class(p("application/pdf")) == "pdf" and c.media_class(p("audio/ogg; codecs=opus")) == "audio"
+    assert c.media_class(p("video/mp4")) == "video" and c.media_class({"hasMedia": False}) == "none"
+    assert c.should_read("audio", "", "999@g.us", []) and c.should_read("pdf", "", "999@g.us", [])
+    assert not c.should_read("image", "", "999@g.us", ["111"]) and c.should_read("image", "", "111@g.us", ["111"])
+    assert c.should_read("image", "רשימת ציוד", "999@g.us", []) and not c.should_read("video", "x", "111@g.us", ["111"])
+
+
+def test_collapse_albums():
+    q = [{"id": "1", "chat": "111@g.us", "sender": "A", "ts": 100, "mclass": "image", "item": "x", "ftext": ""},
+         {"id": "2", "chat": "111@g.us", "sender": "A", "ts": 160, "mclass": "image", "item": "x", "ftext": ""},
+         {"id": "3", "chat": "111@g.us", "sender": "A", "ts": 200, "mclass": "video", "item": "x", "ftext": ""},
+         {"id": "4", "chat": "111@g.us", "sender": "B", "ts": 210, "mclass": "none", "item": "111 | B: hello", "ftext": ""},
+         {"id": "5", "chat": "111@g.us", "sender": "A", "ts": 5000, "mclass": "image", "item": "x", "ftext": ""},
+         {"id": "6", "chat": "111@g.us", "sender": "A", "ts": 5010, "mclass": "image", "item": "x", "ftext": "רשימת ציוד"}]
+    out = c.collapse_albums(q)
+    assert [o["item"] for o in out] == ["111 | A: [2 תמונות + סרטון]", "111 | B: hello", "111 | A: [תמונה]", "x"]
+    assert out[0]["_ids"] == ["1", "2", "3"]
+
+
+
+def test_daily_message_tomorrow_title():
+    e = {"lessons": ["L1"], "bring": [], "notes": []}
+    m = c.daily_message("דנה", "2026-10-07", e, [], True, True, tomorrow=True)
+    assert m["title"] == "🎒 דנה — מחר, יום רביעי 7.10"
+    assert c.daily_message("דנה", "2026-10-07", e, [], True, True)["title"] == "🎒 דנה — יום רביעי 7.10"

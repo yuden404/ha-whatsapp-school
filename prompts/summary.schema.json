@@ -123,6 +123,11 @@
       "selector": {
        "text": {}
       }
+     },
+     "source": {
+      "selector": {
+       "text": {}
+      }
      }
     }
    }

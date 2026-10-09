@@ -179,7 +179,7 @@ def parent_events(raw, today: str) -> list[dict]:
         st, en = str(e.get("start") or ""), str(e.get("end") or "")
         out.append({"child": e.get("child"), "title": e.get("title"), "date": d,
                     "start": st if hhmm.match(st) else "", "end": en if hhmm.match(en) else "",
-                    "location": e.get("location") or "", "evidence": e.get("evidence") or ""})
+                    "location": e.get("location") or "", "evidence": e.get("evidence") or "", "source": e.get("source") or ""})
     return out
 
 
@@ -222,12 +222,14 @@ def accept_message(event: str, payload: Mapping, monitored: Iterable[str]) -> tu
 
 
 def media_rel_path(payload: Mapping, now: datetime | None = None, root: str = "whatsapp") -> str | None:
-    """ASCII-only path for a downloadable PDF/image, or None."""
+    """ASCII-only path for a downloadable attachment (pdf / image / audio / video), or None."""
     media = payload.get("media") or {}
-    mime = str(media.get("mimetype") or "")
-    if not payload.get("hasMedia") or not media.get("url") or not (mime == "application/pdf" or mime.startswith("image/")):
+    mime = str(media.get("mimetype") or "").split(";")[0].strip()
+    mclass = media_class(payload)
+    if mclass in ("none", "other"):
         return None
-    ext = "pdf" if mime == "application/pdf" else re.sub(r"[^a-z0-9]", "", mime.split("/")[1].replace("jpeg", "jpg"))
+    sub = mime.split("/")[1] if "/" in mime else "bin"
+    ext = "pdf" if mclass == "pdf" else re.sub(r"[^a-z0-9]", "", sub.lower().replace("jpeg", "jpg").replace("mpeg", "mp3")) or "bin"
     parts = str(payload.get("id") or "").split("_")
     hid = re.sub(r"[^A-Za-z0-9]", "", parts[2] if len(parts) > 2 else str(int((now or datetime.now()).timestamp())))
     n = now or datetime.now()
@@ -286,6 +288,7 @@ def summary_message(items, forms, events, inbox_count: int, today: str) -> str:
             out += f"• {e.get('child')} — {e.get('title')} · {day_label(e['date'], today)}"
             out += (" " + e["start"]) if e.get("start") else ""
             out += (" · " + e["location"]) if e.get("location") else ""
+            out += f" ({e['source']})" if e.get("source") else ""
             out += "\n"
     if forms:
         out += "\n" + T("summary_forms") + "\n"
@@ -336,7 +339,7 @@ def plan_active(pointer: str, day: str) -> tuple[bool, str]:
 
 
 def daily_message(kid_name: str, day: str, entry: Mapping | None, today_tasks: list[str],
-                  has_plan: bool, school_child: bool, test: bool = False) -> dict | None:
+                  has_plan: bool, school_child: bool, test: bool = False, tomorrow: bool = False) -> dict | None:
     """Port of the 07:15 message. Returns {"kind", "title", "body", "push", "telegram"} or None (nothing to send)."""
     pre = "🧪 " if test else ""
     wd, dm = weekday_he(day), short_date(day)
@@ -356,7 +359,7 @@ def daily_message(kid_name: str, day: str, entry: Mapping | None, today_tasks: l
     lessons, bring, notes = entry.get("lessons") or [], entry.get("bring") or [], entry.get("notes") or []
     if entry.get("no_school") and not lessons:
         return None
-    title = T("daily_title", pre=pre, kid=kid_name, weekday=wd, date=dm)
+    title = T("daily_title_tomorrow" if tomorrow else "daily_title", pre=pre, kid=kid_name, weekday=wd, date=dm)
     body = ""
     if entry.get("hours"):
         body += T("daily_hours", hours=entry["hours"]) + "\n"
@@ -420,3 +423,71 @@ def night_alert_message(items) -> str:
             text = x["item"].split(" | ", 1)[1] if " | " in x["item"] else x["item"]
             out += f"{ALERT_ICON[x['kind']]} {jinja_truncate(text, 250)}\n"
     return out.strip()
+
+
+# ---------------------------------------------------------------- media policy / albums
+def media_class(payload: Mapping) -> str:
+    """pdf | image | audio | video | other | none — what kind of attachment a message carries."""
+    media = payload.get("media") or {}
+    mime = str(media.get("mimetype") or "")
+    if not payload.get("hasMedia") or not media.get("url"):
+        return "none"
+    if mime == "application/pdf":
+        return "pdf"
+    for k in ("image", "audio", "video"):
+        if mime.startswith(k + "/"):
+            return k
+    return "other"
+
+
+def should_read(mclass: str, caption: str, chat_id: str, staff_groups: Iterable[str]) -> bool:
+    """Which attachments go to the model: documents always, audio always, images only with a caption
+    or from a staff group (plain photos from parents are not worth a model call), video never."""
+    if mclass in ("pdf", "audio"):
+        return True
+    if mclass == "image":
+        return bool(str(caption or "").strip()) or chat_id.split("@")[0] in set(staff_groups)
+    return False
+
+
+def collapse_albums(queue: list[dict], gap_seconds: int = 900) -> list[dict]:
+    """Merge runs of unread photos/videos from the same chat and sender within gap_seconds into one
+    queue item ("[8 תמונות]"), so the summary prompt is short and no model call is spent on them."""
+    out: list[dict] = []
+    for q in queue:
+        unread_media = q.get("mclass") in ("image", "video") and not q.get("ftext") and not q.get("caption")
+        prev = out[-1] if out else None
+        if unread_media and prev and prev.get("_album") and prev["chat"] == q["chat"] and prev.get("sender") == q.get("sender") \
+                and abs(int(q.get("ts") or 0) - int(prev.get("ts") or 0)) <= gap_seconds:
+            prev["_n"] += 1
+            prev["_ids"].append(q["id"])
+            prev["ts"] = q.get("ts") or prev["ts"]
+            kinds = prev["_kinds"]
+            kinds[q["mclass"]] = kinds.get(q["mclass"], 0) + 1
+            prev["item"] = f"{q['chat'].split('@')[0]} | {q.get('sender', '')}: " + album_label(kinds)
+            continue
+        q2 = dict(q)
+        if unread_media:
+            q2.update(_album=True, _n=1, _ids=[q["id"]], _kinds={q["mclass"]: 1})
+            q2["item"] = f"{q['chat'].split('@')[0]} | {q.get('sender', '')}: " + album_label(q2["_kinds"])
+        out.append(q2)
+    return out
+
+
+def album_label(kinds: Mapping[str, int]) -> str:
+    parts = []
+    if kinds.get("image"):
+        parts.append(T("n_photos", n=kinds["image"]) if kinds["image"] > 1 else T("one_photo"))
+    if kinds.get("video"):
+        parts.append(T("n_videos", n=kinds["video"]) if kinds["video"] > 1 else T("one_video"))
+    return "[" + " + ".join(parts) + "]"
+
+
+def combined_morning(today_items: list[str], new_msg: str) -> str:
+    """The one morning message: what is due today, then what arrived overnight. '' when both are empty."""
+    parts = []
+    if today_items:
+        parts.append(T("morning_today") + "\n" + "".join(f"• {x}\n" for x in today_items).rstrip("\n"))
+    if new_msg:
+        parts.append(T("morning_new") + "\n" + new_msg)
+    return "\n\n".join(parts)

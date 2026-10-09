@@ -126,3 +126,180 @@ def test_morning_daily_and_night_and_report():
     rep.report({})
     msg = rep.calls[-1][1]["message"]
     assert msg.startswith("🔬") and "_" not in msg
+
+
+
+def test_summary_live_delivers_tasks_forms_events():
+    tmp = tempfile.mkdtemp()
+    os.makedirs(os.path.join(tmp, "compare"))
+    with open(os.path.join(tmp, "queue.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"id": "m1", "ts": 1700000000, "chat": "111@g.us", "sender": "T", "item": "111 | T: ceremony, parents invited. https://forms.gle/abc",
+                            "ftext": "", "media": None, "mime": "", "mclass": "none", "kind": "none", "alerted": False}) + "\n")
+    model = {"tasks": [{"child": "Dana", "date": "", "action": "להביא סרגל", "source": "Class A"}],
+             "forms": [{"child": "Dana", "title": "confirm", "url": "https://forms.gle/abc", "due": "2030-01-05"}],
+             "events": [{"child": "Dana", "title": "טקס", "date": "2030-01-08", "start": "12:00", "end": "", "location": "", "parents_required": True, "evidence": "parents invited", "source": "Class A"}]}
+    services = {"ai_task/generate_data": lambda d: {"response": {"data": model}},
+                "todo/get_items": lambda d: {"response": {"todo.t": {"items": []}}},
+                "calendar/get_events": lambda d: {"response": {"calendar.c": {"events": []}}}}
+    args = {"shadow": False, "data_dir": tmp, "ai_task_entity": "ai_task.x", "tasks_todo": "todo.t", "family_intro": "fam",
+            "child_names": ["Dana"], "school_children": ["Dana"], "names_mention": "Dana", "group_labels": {"111": "Class A"},
+            "notify_entity": "notify.x", "calendars_helper": "input_text.cal", "whatsapp_to": None, "last_summary_helper": "input_text.last"}
+    app = fake_hass.make("wa_summary", "WaSummary", args, {"input_text.cal": {"state": "calendar.c"}}, services)
+    app.run_summary({"slot": "evening"})
+    names = [s for s, _ in app.calls]
+    assert names.count("todo/add_item") == 2 and "calendar/create_event" in names and "notify/send_message" in names
+    adds = [d for s, d in app.calls if s == "todo/add_item"]
+    assert adds[0]["item"] == "Dana — להביא סרגל" and "ללא תאריך בהודעה" in adds[0]["description"]
+    assert adds[1]["description"] == "https://forms.gle/abc"
+    cal = [d for s, d in app.calls if s == "calendar/create_event"][0]
+    assert cal["start_date_time"] == "2030-01-08 12:00:00" and cal["end_date_time"] == "2030-01-08 13:00:00"
+    assert open(os.path.join(tmp, "queue.jsonl"), encoding="utf-8").read() == ""
+
+
+def test_ingest_live_schedules_seen_and_alert():
+    tmp = tempfile.mkdtemp()
+    args = {"shadow": False, "groups": GROUPS, "groups_helper": "input_text.g", "alert_names": ["Dana"],
+            "data_dir": tmp, "media_root": "wa_test_media", "waha_url": "http://waha", "waha_header_file": "/dev/null",
+            "ai_task_entity": "ai_task.x", "alert_group_labels": {"111": "Class A"}, "notify_entity": "notify.x"}
+    app = fake_hass.make("wa_ingest", "WaIngest", args, {"input_text.g": {"state": ""}}, {})
+    app.on_webhook("wa_shadow_webhook", _msg(body="דחוף: מחר אין לימודים"), {})
+    import wa_core
+    if wa_core.is_daytime(__import__("datetime").datetime.now()):
+        delays = [d for d, _ in app.timers if isinstance(d, int)]
+        assert delays and 30 <= delays[-1] <= 120          # read receipt + alert after a human-like pause
+    q = [json.loads(l) for l in open(os.path.join(tmp, "queue.jsonl"), encoding="utf-8")]
+    assert q[0]["kind"] == "urgent" and q[0]["mclass"] == "none"
+
+
+
+def _summary_live(tmp, model, tasks, queue_lines=()):
+    os.makedirs(os.path.join(tmp, "compare"), exist_ok=True)
+    with open(os.path.join(tmp, "queue.jsonl"), "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(x) + "\n" for x in queue_lines)
+    services = {"ai_task/generate_data": lambda d: {"response": {"data": model}},
+                "todo/get_items": lambda d: {"response": {"todo.t": {"items": tasks}}},
+                "calendar/get_events": lambda d: {"response": {"calendar.c": {"events": []}}}}
+    args = {"shadow": False, "data_dir": tmp, "ai_task_entity": "ai_task.x", "tasks_todo": "todo.t", "family_intro": "fam",
+            "child_names": ["Dana"], "school_children": ["Dana"], "names_mention": "Dana", "group_labels": {"111": "Class A"},
+            "notify_entity": "notify.x", "calendars_helper": "input_text.cal", "whatsapp_to": None,
+            "titles": {"morning": "MORNING", "evening": "EVENING"}}
+    return fake_hass.make("wa_summary", "WaSummary", args, {"input_text.cal": {"state": ""}}, services)
+
+
+def _q(item="111 | T: מחר להביא סרגל"):
+    return {"id": "m1", "ts": 1700000000, "chat": "111@g.us", "sender": "T", "item": item, "ftext": "", "media": None,
+            "mime": "", "mclass": "none", "kind": "none", "alerted": False}
+
+
+def test_morning_is_one_message_with_today_and_overnight():
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    tmp = tempfile.mkdtemp()
+    tasks = [{"summary": "Dana — hat", "due": today, "description": ""}]
+    model = {"tasks": [{"child": "Dana", "date": "", "action": "להביא סרגל", "source": "Class A"}], "forms": [], "events": []}
+    app = _summary_live(tmp, model, tasks, [_q()])
+    app.run_summary({"slot": "morning"})
+    sent = [d["message"] for s, d in app.calls if s == "notify/send_message"]
+    assert len(sent) == 1                                              # ONE message, not two
+    assert sent[0].startswith("MORNING\n📌 להיום\n• Dana — hat") and "🌙 חדש מהלילה" in sent[0] and "להביא סרגל" in sent[0]
+    assert sent[0].count("Dana — hat") == 1                           # the new task does not repeat the old one
+
+
+def test_morning_with_empty_queue_still_lists_today():
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    tmp = tempfile.mkdtemp()
+    app = _summary_live(tmp, {}, [{"summary": "Dana — hat", "due": today, "description": ""}], [])
+    app.run_summary({"slot": "morning"})
+    sent = [d["message"] for s, d in app.calls if s == "notify/send_message"]
+    assert sent == ["MORNING\n📌 להיום\n• Dana — hat"] and not [s for s, _ in app.calls if s == "ai_task/generate_data"]
+    app2 = _summary_live(tempfile.mkdtemp(), {}, [], [])               # nothing today, nothing new: silence
+    app2.run_summary({"slot": "morning"})
+    assert not [s for s, _ in app2.calls if s == "notify/send_message"]
+
+
+def test_summary_failure_is_reported_and_queue_kept():
+    tmp = tempfile.mkdtemp()
+    app = _summary_live(tmp, {}, [], [_q()])
+    app.run_summary({"slot": "evening"})
+    sent = [d["message"] for s, d in app.calls if s == "notify/send_message"]
+    assert len(sent) == 1 and sent[0].startswith("⚠️") and "1" in sent[0]
+    assert open(os.path.join(tmp, "queue.jsonl"), encoding="utf-8").read().strip() != ""
+
+
+
+def _morning_live(tmp, plans, tasks=()):
+    json.dump(plans, open(os.path.join(tmp, "weekly_plans.json"), "w", encoding="utf-8"), ensure_ascii=False)
+    services = {"todo/get_items": lambda d: {"response": {"todo.t": {"items": list(tasks)}}}}
+    args = {"shadow": False, "data_dir": tmp, "tasks_todo": "todo.t", "school_calendar_sensor": "sensor.school",
+            "issur_melacha_sensor": "binary_sensor.sb", "notify_entity": "notify.x", "whatsapp_to": "972500000000@c.us",
+            "waha_url": "http://waha", "waha_header_file": "/dev/null",
+            "kids": [{"key": "kid_a", "name": "Dana", "school": True, "pointer": "input_text.p", "sensor": "sensor.plan"}]}
+    return fake_hass.make("wa_morning", "WaMorning", args, {}, services)
+
+
+def _capture_whatsapp():
+    """Replace wa_send.whatsapp_send for one test. The caller MUST call restore(): the self-tests run inside
+    AppDaemon, where this module is shared with the live apps."""
+    import wa_send
+    sent, original = [], wa_send.whatsapp_send
+    wa_send.whatsapp_send = lambda cfg, mode, **kw: sent.append((mode, kw)) or True
+    return sent, lambda: setattr(wa_send, "whatsapp_send", original)
+
+
+def test_evening_schedule_sends_tomorrow_to_whatsapp_only():
+    import datetime as _dt
+    sent, restore = _capture_whatsapp()
+    try:
+        tmo = _dt.date.today() + _dt.timedelta(days=1)
+        tmp = tempfile.mkdtemp()
+        entry = {"date": tmo.isoformat(), "lessons": ["L1"], "bring": ["ruler"], "notes": [], "hours": ""}
+        app = _morning_live(tmp, {"kid_a": {"file": "wa/x.pdf", "start": "2020-01-01", "end": "2099-01-01", "days": [entry]}})
+        app.run_evening_schedule({})
+        if tmo.weekday() == 5:
+            assert sent == []                                  # tomorrow is Saturday: nothing
+        else:
+            assert len(sent) == 1 and sent[0][0] == "text" and "מחר" in sent[0][1]["text"] and "ruler" in sent[0][1]["text"]
+        assert not [s for s, _ in app.calls if s == "notify/send_message"]   # evening goes to WhatsApp only
+    finally:
+        restore()
+
+
+def test_morning_0715_is_telegram_only():
+    import datetime as _dt
+    sent, restore = _capture_whatsapp()
+    try:
+        today = _dt.date.today()
+        tmp = tempfile.mkdtemp()
+        entry = {"date": today.isoformat(), "lessons": ["L1"], "bring": [], "notes": [], "hours": ""}
+        app = _morning_live(tmp, {"kid_a": {"file": "wa/x.pdf", "start": "2020-01-01", "end": "2099-01-01", "days": [entry]}})
+        app.states.update({"input_text.p": {"state": "wa/x.pdf|2020-01-01|2099-01-01|t"}})
+        app.run_daily_schedule({})
+        assert sent == []                                      # nothing goes to WhatsApp at 07:15 any more
+    finally:
+        restore()
+
+
+def test_selftests_leave_whatsapp_send_intact():
+    import wa_send
+    sent, restore = _capture_whatsapp()
+    restore()
+    assert wa_send.whatsapp_send.__module__ == "wa_send"
+
+
+
+def test_alert_goes_to_whatsapp_when_enabled():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        args = {"shadow": False, "groups": GROUPS, "groups_helper": "input_text.g", "alert_names": ["Dana"], "data_dir": tmp,
+                "media_root": "wa_test_media", "waha_url": "http://waha", "waha_header_file": "/dev/null", "ai_task_entity": "ai_task.x",
+                "alert_group_labels": {"111": "Class A"}, "notify_entity": "notify.x", "alerts_to_whatsapp": True, "whatsapp_to": "972500000000@c.us"}
+        app = fake_hass.make("wa_ingest", "WaIngest", args, {"input_text.g": {"state": ""}}, {})
+        import wa_send
+        wa_send.send_seen = lambda cfg, chat: 200
+        app._seen_and_alert("111@g.us", {"title": "⚠️ דחוף — Class A", "text": "T: no school"})
+        assert sent == [("text", {"text": "⚠️ דחוף — Class A\nT: no school", "log": app.log})] or sent[0][1]["text"].startswith("⚠️")
+        assert [s for s, _ in app.calls if s == "notify/send_message"]
+    finally:
+        restore()
