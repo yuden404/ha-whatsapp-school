@@ -35,7 +35,7 @@ SKIP_DIRS = {".git", "__pycache__", ".pytest_cache"}
 # apps.yaml keys whose values are settings, not personal data (module names, public GitHub identity, times, flags)
 CONFIG_KNOBS = {"module", "class", "remote", "git_name", "git_email", "shadow", "start_delay", "notify_always",
                 "times", "time", "daily_time", "morning_time", "output_language", "media_root", "data_dir",
-                "apps_yaml", "deploy_key"}
+                "apps_yaml", "deploy_key", "time_zone", "language"}
 TEXT_EXT = {".py", ".md", ".yaml", ".yml", ".json", ".txt", ".toml", ".cfg", ".ini", ".example", ""}
 
 

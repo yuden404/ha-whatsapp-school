@@ -36,6 +36,8 @@ class WaSummary(hass.Hass):
         pdir = os.path.join(HERE, "prompts")
         self.tpl = wa_core.load_prompt(pdir, "summary", "summary")
         self.tpl["files_note"] = wa_core.load_prompt(pdir, "summary_files_note")["instructions"]
+        self.tpl["facts_rules"] = wa_core.load_prompt(pdir, "facts_rules")["instructions"]
+        self.facts = wa_store.JsonFile(os.path.join(self.data_dir, "facts.json"), {"facts": []})
         for slot, t in c.get("times", {"evening": "21:00:00", "morning": "07:30:00"}).items():
             self.run_daily(self.run_summary, t, slot=slot)
         self.listen_event(self.on_prod, "wa_prod_summary")
@@ -70,6 +72,9 @@ class WaSummary(hass.Hass):
             "NAMES_MENTION": c["names_mention"],
             "CHILD_OPTIONS": "|".join(names + ["כולם"]),
         }
+        vals = {"FACTS_RULES": wa_core.fill(self.tpl["facts_rules"], {
+            "CHILD_OPTIONS": vals["CHILD_OPTIONS"],
+            "FACT_KEYS": wa_core.fact_keys_for_prompt(self.facts.read()["facts"]) or "(none yet)\n"}), **vals}
         attach = [q for q in inbox if q.get("media") and q.get("mclass") in ("pdf", "image") and not q.get("ftext")
                   and not q.get("_album") and wa_core.safe_path(q["media"])]
         if attach:
@@ -97,6 +102,8 @@ class WaSummary(hass.Hass):
                 if morning_live:
                     self._deliver(slot, EMPTY_OUT, [])
             return self._record(slot, {"error": "gemini_failed", "inbox_n": len(inbox)})
+        if isinstance(data.get("facts"), list) and data["facts"]:
+            self.facts.update(lambda d: {"facts": wa_core.merge_facts(d.get("facts", []), data["facts"], today, source="summary")})
         src = " ".join(q["item"] + " " + (q.get("ftext") or "") for q in inbox)
         items = [t for t in data["tasks"] if t.get("action")]
         forms = wa_core.valid_forms(data.get("forms"), src)

@@ -89,9 +89,14 @@ class WaIngest(hass.Hass):
         daytime = wa_core.is_daytime(datetime.now())
         label = self.cfg.get("alert_group_labels", {}).get(chat.split("@")[0], chat.split("@")[0])
         alert = wa_core.day_alert(rec["kind"], label, sender, body) if daytime else None
-        self.queue.append({"id": mid, "ts": p.get("timestamp") or 0, "chat": chat, "sender": sender, "item": item,
-                           "caption": body if mclass != "none" else "", "ftext": ftext, "media": rec["media"], "mime": mime,
-                           "mclass": mclass, "kind": rec["kind"], "alerted": bool(alert)})
+        record = {"id": mid, "ts": p.get("timestamp") or 0, "chat": chat, "sender": sender, "item": item,
+                  "caption": body if mclass != "none" else "", "ftext": ftext, "media": rec["media"], "mime": mime,
+                  "mclass": mclass, "kind": rec["kind"], "alerted": bool(alert)}
+        self.queue.append(record)
+        try:  # permanent archive for the assistant (the queue is emptied by every summary)
+            wa_store.JsonlQueue(wa_store.archive_path(self.data_dir, record["ts"] or None)).append(record)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"archive append failed: {e}", level="WARNING")
         if self.shadow:
             if alert:
                 self.alerts[mid] = alert

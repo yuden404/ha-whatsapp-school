@@ -33,7 +33,16 @@ Runs at home on [Home Assistant](https://www.home-assistant.io/) with [AppDaemon
 
 Media: PDFs always, images only with a caption or from a staff group, voice notes always (transcribed), video never read. A run of photos/videos from one sender becomes one line in the summary. Videos are kept a week, other files three weeks.
 
-Next: a chat assistant on the same number, see [docs/assistant-plan.md](docs/assistant-plan.md).
+## Chat with the number
+
+The two parents can write to the same number (text or voice note):
+
+- **School questions** ("what is the gate code?", "what does she need tomorrow?") are answered only from a context packet: a facts memory, the weekly schedules, open tasks, calendar events and the last two weeks of group messages. "I don't have that" is a valid answer.
+- **"Remember that ..."** adds a fact to the shared memory.
+- **Home requests** go to the same Home Assistant conversation agent as the Telegram bot.
+- **Chat history**: share a WhatsApp "export chat" file with the number; it is matched to its group, merged into the archive without duplicates, and mined for facts. Group members added late (the number itself) cannot see older messages, so this is how the memory gets the past.
+
+Facts are extracted by the model at every summary (and from imports), one active value per child and topic; a newer value supersedes the old one, which is kept. Design: [docs/assistant-plan.md](docs/assistant-plan.md).
 
 ## Layout
 
@@ -44,7 +53,10 @@ Next: a chat assistant on the same number, see [docs/assistant-plan.md](docs/ass
 | `wa_summary.py` | Evening and morning summaries; tasks, forms, parent events; delivery |
 | `wa_morning.py` | Schedules (07:15 / 21:05), night digest |
 | `wa_send.py`, `tools/waha_send.py` | Outbound WhatsApp (one-to-one only), read receipts |
-| `wa_store.py` | Locked JSONL queue shared by the apps |
+| `wa_store.py` | Locked JSONL queue and JSON files shared by the apps; archive paths |
+| `wa_assistant.py` | Chat with the number: context packet, routes (school / remember / home / smalltalk) |
+| `wa_private.py` | "Export chat" files from the parents → archive + facts |
+| `wa_history.py` | One-off import from WAHA history + facts extraction |
 | `docs/` | Design notes and plans |
 | `wa_selftest.py` | Unit tests, parity tests against the old Jinja implementation, live integration checks |
 | `wa_publish.py` | Publishes this folder to GitHub behind the privacy gate |

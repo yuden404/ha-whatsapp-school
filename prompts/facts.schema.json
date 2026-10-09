@@ -1,0 +1,39 @@
+{
+ "facts": {
+  "required": true,
+  "selector": {
+   "object": {
+    "multiple": true,
+    "fields": {
+     "child": {
+      "required": true,
+      "selector": {
+       "select": {
+        "options": [
+         "{CHILD_OPTIONS_LIST}"
+        ]
+       }
+      }
+     },
+     "key": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "value": {
+      "required": true,
+      "selector": {
+       "text": {}
+      }
+     },
+     "evidence": {
+      "selector": {
+       "text": {}
+      }
+     }
+    }
+   }
+  }
+ }
+}

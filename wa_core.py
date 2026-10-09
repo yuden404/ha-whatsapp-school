@@ -6,6 +6,7 @@ No personal data: group ids, child names etc. come from config at runtime.
 """
 from __future__ import annotations
 
+import os
 import re
 from datetime import date, datetime, timedelta
 from collections.abc import Iterable, Mapping
@@ -32,7 +33,7 @@ def set_locale(code: str = "he", locale_dir: str | None = None) -> None:
     _ALL_MARKS = [m for m in marks if m]
 
 
-def T(key: str, **kw) -> str:
+def T(key: str, /, **kw) -> str:
     return _L[key].format(**kw) if kw else _L[key]
 
 
@@ -491,3 +492,174 @@ def combined_morning(today_items: list[str], new_msg: str) -> str:
     if new_msg:
         parts.append(T("morning_new") + "\n" + new_msg)
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------- facts memory
+MAX_ACTIVE_FACTS = 500
+
+
+def active_facts(facts: list[dict]) -> list[dict]:
+    return [f for f in facts if f.get("active", True)]
+
+
+def fact_keys_for_prompt(facts: list[dict]) -> str:
+    """'- child: key' lines, so the model reuses an existing key for the same fact."""
+    return "".join(f"- {f.get('child', '')}: {f.get('key', '')}\n" for f in active_facts(facts))
+
+
+def merge_facts(facts: list[dict], new: list[dict], today: str, source: str = "", msg_id: str = "") -> list[dict]:
+    """One active fact per (child, normalised key). Same value -> bump last_seen; new value -> supersede the old row.
+    Old rows are kept (inactive) so the history of a fact is never lost. Returns a new list."""
+    out = [dict(f) for f in facts]
+    next_id = 1 + max([int(str(f.get("id", "f0"))[1:] or 0) for f in out if str(f.get("id", "")).startswith("f")] or [0])
+    for n in new if isinstance(new, list) else []:
+        child, key, value = (str(n.get(k) or "").strip() for k in ("child", "key", "value"))
+        if not key or not value:
+            continue
+        k = norm(key)
+        cur = next((f for f in out if f.get("active", True) and f.get("child", "") == child and norm(f.get("key", "")) == k), None)
+        if cur and norm(cur.get("value", "")) == norm(value):
+            cur["last_seen"] = today
+            continue
+        fid = f"f{next_id}"
+        next_id += 1
+        if cur:
+            cur["active"] = False
+            cur["superseded_by"] = fid
+        out.append({"id": fid, "child": child, "key": key, "value": value, "evidence": str(n.get("evidence") or "")[:300],
+                    "source": source or str(n.get("source") or ""), "msg_id": msg_id, "first_seen": today, "last_seen": today, "active": True})
+    act = sorted(active_facts(out), key=lambda f: f.get("last_seen", ""))
+    for f in act[: max(0, len(act) - MAX_ACTIVE_FACTS)]:
+        f["active"] = False
+    return out
+
+
+# ---------------------------------------------------------------- WhatsApp "export chat" files
+_BIDI = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+_EXPORT_LINE = re.compile(
+    r"^\[?(\d{1,2})[./](\d{1,2})[./](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s?([AaPp]\.?[Mm]\.?)?\]?(?:\s+-)?\s+(.*)$")
+_EXPORT_SKIP = re.compile(r"^(<?(המדיה הושמטה|Media omitted|image omitted|video omitted|audio omitted|sticker omitted|"
+                          r"GIF omitted|document omitted|התמונה הושמטה|הסרטון הושמט|האודיו הושמט|המדבקה הושמטה)>?|"
+                          r"הודעה זו נמחקה|This message was deleted|You deleted this message)\s*$", re.I)
+_EXPORT_PREFIX = re.compile(r"^(WhatsApp Chat\s*-\s*|WhatsApp Chat with\s+|צ'?אט WhatsApp עם\s+|צ׳אט WhatsApp עם\s+)", re.I)
+
+
+def export_group_name(filename: str) -> str:
+    """'WhatsApp Chat - כיתה א׳.zip' -> 'כיתה א׳'."""
+    name = os.path.basename(str(filename or ""))
+    name = re.sub(r"\.(zip|txt)$", "", name, flags=re.I)
+    return _EXPORT_PREFIX.sub("", _BIDI.sub("", name)).strip()
+
+
+def parse_whatsapp_export(text: str) -> list[dict]:
+    """Messages from an exported chat (iOS '[d.m.yyyy, hh:mm:ss] name: text' or Android 'd.m.yyyy, hh:mm - name: text').
+    Returns [{"y","mo","d","h","mi","s","sender","text","media"}], local wall-clock time, in file order.
+    Multi-line messages are joined; system lines (no 'name: ') and deleted messages are dropped."""
+    raw = []
+    for line in _BIDI.sub("", str(text or "")).splitlines():
+        m = _EXPORT_LINE.match(line)
+        if m:
+            raw.append(list(m.groups()))
+        elif raw and line.strip():
+            raw[-1][7] += "\n" + line
+    if not raw:
+        return []
+    month_first = any(int(r[1]) > 12 for r in raw)  # day-first unless the data proves otherwise (Israeli exports are d.m.y)
+    out = []
+    for a, b, y, h, mi, sec, ampm, rest in raw:
+        if ": " not in rest:
+            continue  # system line: joined, created group, changed subject
+        sender, body = rest.split(": ", 1)
+        body = body.strip()
+        if not body or (_EXPORT_SKIP.match(body) and "omitted" not in body.lower() and "הושמט" not in body):
+            continue  # empty or deleted
+        d, mo = (int(b), int(a)) if month_first else (int(a), int(b))
+        yy = int(y) + (2000 if len(y) == 2 else 0)
+        hh = int(h)
+        if ampm:
+            pm = ampm.lower().startswith("p")
+            hh = (hh % 12) + (12 if pm else 0)
+        is_media = bool(_EXPORT_SKIP.match(body))
+        out.append({"y": yy, "mo": mo, "d": d, "h": hh, "mi": int(mi), "s": int(sec or 0), "sender": sender.strip(),
+                    "text": "[מדיה]" if is_media else body, "media": is_media})
+    return out
+
+
+def export_key(chat: str, ts: int, text: str) -> str:
+    """Dedupe key across WAHA records and export records: group, minute, start of the normalised text."""
+    return f"{chat}|{int(ts) // 60}|{norm(text)[:60]}"
+
+
+def text_of_item(item: str) -> str:
+    """The message text inside a queue/archive item 'gid | sender: text'."""
+    rest = item.split(" | ", 1)[1] if " | " in item else item
+    return rest.split(": ", 1)[1] if ": " in rest else rest
+
+
+def match_group_by_name(name: str, subjects: Mapping[str, str]) -> str:
+    """group id whose current subject equals / contains the export name (normalised), else ''."""
+    n = norm(name)
+    if not n:
+        return ""
+    exact = [g for g, s in subjects.items() if norm(s) == n]
+    if len(exact) == 1:
+        return exact[0]
+    part = [g for g, s in subjects.items() if n in norm(s) or norm(s) in n]
+    return part[0] if len(part) == 1 else ""
+
+
+def match_group_by_content(texts: Iterable[str], archive_texts: Mapping[str, set]) -> tuple[str, int]:
+    """(group id, overlap) of the group whose archived texts overlap most with the export, if clearly best."""
+    keys = {norm(t)[:60] for t in texts if len(norm(t)) >= 8}
+    scores = sorted(((len(keys & v), g) for g, v in archive_texts.items()), reverse=True)
+    if not scores or scores[0][0] < 3 or (len(scores) > 1 and scores[1][0] * 2 > scores[0][0]):
+        return "", scores[0][0] if scores else 0
+    return scores[0][1], scores[0][0]
+
+
+# ---------------------------------------------------------------- assistant context
+def keep_newest(lines: list[str], max_chars: int) -> list[str]:
+    """Drop the OLDEST lines until the total fits (lines are in time order, newest last)."""
+    out, total = [], 0
+    for ln in reversed(lines):
+        if total + len(ln) > max_chars:
+            break
+        out.append(ln)
+        total += len(ln)
+    return list(reversed(out))
+
+
+def format_plan(name: str, plan: Mapping, today: str) -> str:
+    if not plan or not plan.get("days"):
+        return ""
+    out = f"## {name} ({plan.get('start', '')} – {plan.get('end', '')})\n"
+    for d in plan["days"]:
+        mark = " ← today" if d.get("date") == today else ""
+        if d.get("no_school"):
+            out += f"- {day_label(d['date'], today)}{mark}: no school\n"
+            continue
+        out += f"- {day_label(d['date'], today)}{mark}" + (f", {d['hours']}" if d.get("hours") else "") + "\n"
+        out += "".join(f"  - {x}\n" for x in d.get("lessons") or [])
+        if d.get("bring"):
+            out += "  - bring: " + ", ".join(d["bring"]) + "\n"
+        if d.get("notes"):
+            out += "  - notes: " + " · ".join(d["notes"]) + "\n"
+    return out
+
+
+def build_context(facts: list[dict], plans: Mapping[str, Mapping], child_names: Mapping[str, str], tasks: list[dict],
+                  events: list[dict], messages: list[str], today: str, max_chars: int = 60000) -> str:
+    """Everything the assistant may answer from, as one text. Recent messages are cut from the oldest side."""
+    parts = ["# Facts (durable, newest value per topic)\n" + ("".join(
+        f"- {f.get('child', '')} | {f.get('key', '')}: {f.get('value', '')} (last seen {f.get('last_seen', '')})\n"
+        for f in active_facts(facts)) or "(none)\n")]
+    plan_txt = "".join(format_plan(child_names.get(k, k), p, today) for k, p in (plans or {}).items())
+    parts.append("# Weekly school schedules\n" + (plan_txt or "(none stored)\n"))
+    parts.append("# Open tasks (due date: task)\n" + ("".join(
+        f"- {t.get('due', '') or 'no date'}: {t.get('summary', '')}\n" for t in sorted(tasks or [], key=lambda t: t.get("due") or "9999"))
+        or "(none)\n"))
+    parts.append("# Parent events in the calendar\n" + ("".join(
+        f"- {e.get('start', '')}: {e.get('summary', '')}\n" for e in events or []) or "(none)\n"))
+    head = "".join(parts)
+    recent = keep_newest(messages, max(0, max_chars - len(head)))
+    return head + "# Recent group messages (oldest first)\n" + ("".join(recent) or "(none)\n")

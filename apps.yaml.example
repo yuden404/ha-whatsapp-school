@@ -94,6 +94,51 @@ wa_night:
   waha_url: http://waha.local:3000
   waha_header_file: /homeassistant/.waha_curl_header
 
+wa_history:                                    # one-off: event wa_import_history {"since": "YYYY-MM-DD"}
+  module: wa_history
+  class: WaHistory
+  data_dir: /homeassistant/appdaemon/data
+  groups: {"GROUP_ID_1": kid_a}
+  child_names: {kid_a: KidA}
+  group_labels: {"GROUP_ID_1": "Class 2A -> KidA"}
+  family_intro: "..."
+  ai_task_entity: ai_task.example
+  notify_entity: notify.example
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+
+wa_private:                                    # parents share "export chat" files with the number
+  module: wa_private
+  class: WaPrivate
+  data_dir: /homeassistant/appdaemon/data
+  allowed_contacts: ["<parent1>@c.us", "<parent2>@c.us"]
+  time_zone: Asia/Jerusalem
+  groups: {"GROUP_ID_1": kid_a}
+  child_names: {kid_a: KidA}
+  group_labels: {"GROUP_ID_1": "Class 2A -> KidA"}
+  family_intro: "..."
+  ai_task_entity: ai_task.example
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+
+wa_assistant:                                  # chat with the number
+  module: wa_assistant
+  class: WaAssistant
+  data_dir: /homeassistant/appdaemon/data
+  allowed_contacts: ["<parent1>@c.us", "<parent2>@c.us"]
+  reply_contacts: ["<parent1>@c.us", "<parent2>@c.us"]   # others in allowed_contacts are logged only
+  contact_names: {"<parent1>@c.us": ParentA, "<parent2>@c.us": ParentB}
+  rate_limit_per_hour: 50
+  home_agent: conversation.example              # same agent as your Telegram bot; empty = home control off
+  tasks_todo: todo.example_tasks
+  calendars_helper: input_text.example_calendars
+  child_names: {kid_a: KidA}
+  group_labels: {"GROUP_ID_1": "Class 2A -> KidA"}
+  family_intro: "..."
+  ai_task_entity: ai_task.example
+  waha_url: http://waha.local:3000
+  waha_header_file: /homeassistant/.waha_curl_header
+
 wa_publish:
   module: wa_publish
   class: WaPublish

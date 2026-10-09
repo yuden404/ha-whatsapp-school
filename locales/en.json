@@ -46,5 +46,13 @@
  "morning_today": "📌 For today",
  "morning_new": "🌙 New overnight",
  "summary_failed": "⚠️ WhatsApp summary failed — {n} messages stay in the queue for the next run.",
- "daily_title_tomorrow": "{pre}🎒 {kid} — tomorrow, {weekday} {date}"
+ "daily_title_tomorrow": "{pre}🎒 {kid} — tomorrow, {weekday} {date}",
+ "import_done": "✅ {group}: imported {n} new messages from {first} to {last} ({dup} already there), {facts} new facts.",
+ "import_unknown": "❓ Could not tell which group the file \"{name}\" belongs to. It is saved and can be assigned by hand.",
+ "import_bad": "⚠️ The file \"{name}\" does not look like a WhatsApp chat export.",
+ "assistant_home_off": "Home control is not active here yet.",
+ "assistant_home_failed": "The house did not answer. Try again in a moment.",
+ "assistant_saved": "Saved: {key} — {value}.",
+ "assistant_busy": "Too many questions at once. Try again in a few minutes.",
+ "assistant_failed": "Something went wrong on my side. Please ask again."
 }

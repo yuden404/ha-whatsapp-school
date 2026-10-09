@@ -11,9 +11,12 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def whatsapp_send(cfg: dict, mode: str, text: str = "", path: str = "", caption: str = "", log=None) -> bool:
-    """mode 'text' | 'file' via tools/waha_send.py. Returns False (and logs) on failure, never raises."""
-    chat = cfg.get("whatsapp_to")
+def whatsapp_send(cfg: dict, mode: str, text: str = "", path: str = "", caption: str = "", log=None, to: str | None = None) -> bool:
+    """mode 'text' | 'file' via tools/waha_send.py, to the family contact (or 'to', a private chat id).
+    Returns False (and logs) on failure, never raises. Never used for groups."""
+    chat = to or cfg.get("whatsapp_to")
+    if chat and chat.endswith("@g.us"):
+        return False
     if not chat:
         return False
     b64 = lambda t: base64.b64encode(t.encode("utf-8")).decode("ascii")  # noqa: E731

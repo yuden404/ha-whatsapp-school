@@ -303,3 +303,222 @@ def test_alert_goes_to_whatsapp_when_enabled():
         assert [s for s, _ in app.calls if s == "notify/send_message"]
     finally:
         restore()
+
+
+
+def test_summary_writes_facts_and_offers_keys_next_time():
+    tmp = tempfile.mkdtemp()
+    model = {"tasks": [], "forms": [], "events": [], "facts": [{"child": "Dana", "key": "קוד שער", "value": "1234", "evidence": "הקוד 1234"}]}
+    app = _summary_live(tmp, model, [], [_q("111 | T: הקוד לשער 1234")])
+    app.run_summary({"slot": "evening"})
+    facts = json.load(open(os.path.join(tmp, "facts.json"), encoding="utf-8"))["facts"]
+    assert [(f["child"], f["key"], f["value"], f["source"]) for f in facts] == [("Dana", "קוד שער", "1234", "summary")]
+    with open(os.path.join(tmp, "queue.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(_q("111 | T: שלום")) + "\n")
+    app.run_summary({"slot": "evening"})
+    prompt = [d for s, d in app.calls if s == "ai_task/generate_data"][-1]["service_data"]["instructions"]
+    assert "- Dana: קוד שער" in prompt and "{FACT" not in prompt
+
+
+def test_ingest_archives_every_accepted_message():
+    tmp = tempfile.mkdtemp()
+    app = _ingest(tmp)
+    app.on_webhook("wa_shadow_webhook", _msg("m1", body="a"), {})
+    app.on_webhook("wa_shadow_webhook", _msg("m2", chat="999@g.us", body="b"), {})   # not monitored: not archived
+    import glob as _g
+    files = _g.glob(os.path.join(tmp, "archive", "*.jsonl"))
+    assert len(files) == 1 and [json.loads(l)["id"] for l in open(files[0], encoding="utf-8")] == ["m1"]
+
+
+def test_history_import_is_idempotent_and_extracts_facts():
+    tmp = tempfile.mkdtemp()
+    msgs = [{"id": "h1", "from": "111@g.us", "body": "הקוד לשער 1234", "timestamp": 1790000000, "_data": {"type": "chat", "notifyName": "T"}},
+            {"id": "h2", "from": "111@g.us", "body": "", "timestamp": 1790000100, "_data": {"type": "revoked"}}]
+    services = {"ai_task/generate_data": lambda d: {"response": {"data": {"facts": [{"child": "Dana", "key": "קוד שער", "value": "1234"}]}}}}
+    args = {"data_dir": tmp, "groups": {"111": "kid_a"}, "child_names": {"kid_a": "Dana"}, "group_labels": {"111": "Class A"},
+            "ai_task_entity": "ai_task.x", "notify_entity": "notify.x", "waha_url": "http://waha", "waha_header_file": "/dev/null"}
+    app = fake_hass.make("wa_history", "WaHistory", args, {}, services)
+    app.fetch = lambda chat, since: msgs
+    app.on_import("wa_import_history", {"since": "2026-07-01"}, {})
+    app.on_import("wa_import_history", {"since": "2026-07-01"}, {})             # second run adds nothing
+    import glob as _g
+    lines = [l for p in _g.glob(os.path.join(tmp, "archive", "*.jsonl")) for l in open(p, encoding="utf-8")]
+    assert len(lines) == 1
+    facts = json.load(open(os.path.join(tmp, "facts.json"), encoding="utf-8"))["facts"]
+    assert facts[0]["value"] == "1234" and facts[0]["source"] == "history"
+    assert app.set_states["sensor.wa_history"]["attributes"]["imported"] == 0  # the last run
+
+
+
+def _private(tmp, services=None):
+    args = {"data_dir": tmp, "allowed_contacts": ["972500000001@c.us"], "groups": {"111": "kid_a", "222": "kid_b"},
+            "group_labels": {"111": "Class A", "222": "Kinder B"}, "child_names": {"kid_a": "Dana", "kid_b": "Ron"},
+            "ai_task_entity": "ai_task.x", "waha_url": "http://waha", "waha_header_file": "/dev/null", "time_zone": "Asia/Jerusalem"}
+    services = services or {"ai_task/generate_data": lambda d: {"response": {"data": {"facts": [{"child": "Dana", "key": "קוד שער", "value": "1234"}]}}}}
+    app = fake_hass.make("wa_private", "WaPrivate", args, {}, services)
+    app.subjects = {"111": "כיתה א הורים", "222": "גן ב"}
+    return app
+
+
+def _export_zip(lines: str) -> bytes:
+    import io
+    import zipfile
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        z.writestr("_chat.txt", lines)
+    return b.getvalue()
+
+
+def _export_msg(mid="e1", sender="972500000001@c.us", name="WhatsApp Chat - כיתה א הורים.zip"):
+    return {"json": json.dumps({"event": "message", "payload": {"id": mid, "from": sender, "fromMe": False, "hasMedia": True,
+                                                                 "media": {"url": "http://localhost:3000/f", "mimetype": "application/zip", "filename": name}}})}
+
+
+def test_private_export_import_by_name_dedupe_and_reply():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        app = _private(tmp)
+        blob = _export_zip("[24.9.2026, 17:20:25] T: הקוד לשער 1234\n[24.9.2026, 17:25:00] T: שלום\n")
+        app.download = lambda p: blob
+        app.on_webhook("wa_shadow_webhook", _export_msg(), {})
+        import glob as _g
+        lines = [json.loads(l) for p in _g.glob(os.path.join(tmp, "archive", "*.jsonl")) for l in open(p, encoding="utf-8")]
+        assert [l["item"] for l in lines] == ["111 | T: הקוד לשער 1234", "111 | T: שלום"] and lines[0]["chat"] == "111@g.us"
+        assert sent and sent[-1][1]["to"] == "972500000001@c.us" and sent[-1][1]["text"].startswith("✅ Class A: יובאו 2")
+        app.on_webhook("wa_shadow_webhook", _export_msg(), {})              # same message again: ignored
+        assert len(sent) == 1
+        app.on_webhook("wa_shadow_webhook", _export_msg("e2"), {})          # same content, new message: all duplicates
+        assert "יובאו 0" in sent[-1][1]["text"] and "(2 כבר היו)" in sent[-1][1]["text"]
+        facts = json.load(open(os.path.join(tmp, "facts.json"), encoding="utf-8"))["facts"]
+        assert facts[0]["source"] == "export"
+    finally:
+        restore()
+
+
+def test_private_ignores_strangers_and_matches_by_content():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        app = _private(tmp)
+        app.download = lambda p: _export_zip("[1.9.2026, 10:00:00] T: x\n")
+        app.on_webhook("wa_shadow_webhook", _export_msg(sender="972599999999@c.us"), {})
+        assert sent == [] and not os.path.exists(os.path.join(tmp, "archive"))
+        import wa_store
+        for i, t in enumerate(["הודעה ראשונה ארוכה", "עוד הודעה ארוכה", "והודעה שלישית ארוכה"]):
+            wa_store.JsonlQueue(wa_store.archive_path(tmp, 1790000000 + i)).append(
+                {"id": f"w{i}", "ts": 1790000000 + i * 3600, "chat": "222@g.us", "item": f"222 | P: {t}"})
+        body = "".join(f"[{d}.9.2026, 10:00:00] P: {t}\n" for d, t in ((2, "הודעה ראשונה ארוכה"), (3, "עוד הודעה ארוכה"), (4, "והודעה שלישית ארוכה")))
+        app.download = lambda p: _export_zip(body)
+        app.on_webhook("wa_shadow_webhook", _export_msg("e3", name="WhatsApp Chat - שם אחר לגמרי.zip"), {})
+        assert sent[-1][1]["text"].startswith("✅ Kinder B")
+    finally:
+        restore()
+
+
+
+def test_private_lid_sender_triggers_a_scan_not_an_import():
+    tmp = tempfile.mkdtemp()
+    app = _private(tmp)
+    scanned = []
+    app.scan = lambda: scanned.append(1)
+    app.timers.clear()
+    app.on_webhook("wa_shadow_webhook", _export_msg(sender="12345@lid"), {})
+    assert not os.path.exists(os.path.join(tmp, "archive")) and len(app.timers) == 1
+    app.fire_timers()
+    assert scanned == [1]
+
+
+
+def _assistant(tmp, model, reply=True, extra=None):
+    services = {"ai_task/generate_data": lambda d: {"response": {"data": model}},
+                "todo/get_items": lambda d: {"response": {"todo.t": {"items": [{"summary": "Dana — hat", "due": ""}]}}},
+                "conversation/process": lambda d: {"response": {"response": {"speech": {"plain": {"speech": "כיביתי את האור"}}}}}}
+    args = {"data_dir": tmp, "allowed_contacts": ["972500000001@c.us"], "reply_contacts": ["972500000001@c.us"] if reply else [],
+            "contact_names": {"972500000001@c.us": "Parent"}, "child_names": {"kid_a": "Dana"}, "group_labels": {"111": "Class A"},
+            "tasks_todo": "todo.t", "ai_task_entity": "ai_task.x", "waha_url": "http://waha", "waha_header_file": "/dev/null",
+            "home_agent": "conversation.agent", **(extra or {})}
+    app = fake_hass.make("wa_assistant", "WaAssistant", args, {}, services)
+    app.resolve_lids = lambda: {}
+    app.timers.clear()
+    return app
+
+
+def _dm(body, sender="972500000001@c.us", mid="d1"):
+    return {"json": json.dumps({"event": "message", "payload": {"id": mid, "from": sender, "fromMe": False, "body": body, "hasMedia": False}})}
+
+
+def test_assistant_answers_from_context():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        json.dump({"facts": [{"child": "Dana", "key": "קוד שער", "value": "1234", "active": True}]}, open(os.path.join(tmp, "facts.json"), "w"))
+        app = _assistant(tmp, {"route": "school", "answer": "הקוד הוא 1234.", "confidence": "high"})
+        app.on_webhook("e", _dm("מה הקוד לשער?"), {})
+        app.fire_timers()
+        assert sent[-1][1]["text"] == "הקוד הוא 1234." and sent[-1][1]["to"] == "972500000001@c.us"
+        prompt = [d for s, d in app.calls if s == "ai_task/generate_data"][-1]["service_data"]["instructions"]
+        assert "קוד שער: 1234" in prompt and "מה הקוד לשער?" in prompt and "Dana — hat" in prompt and "{" + "CONTEXT}" not in prompt
+    finally:
+        restore()
+
+
+def test_assistant_ignores_strangers_and_maps_known_lid():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        app = _assistant(tmp, {"route": "smalltalk", "answer": "היי"})
+        app.on_webhook("e", _dm("hi", sender="972599999999@c.us"), {})
+        app.on_webhook("e", _dm("hi", sender="555@lid"), {})
+        app.fire_timers()
+        assert sent == []
+        json.dump({"777@lid": "972500000001@c.us"}, open(os.path.join(tmp, "lids.json"), "w"))
+        app.on_webhook("e", _dm("hi", sender="777@lid"), {})
+        app.fire_timers()
+        assert sent[-1][1]["to"] == "972500000001@c.us"
+    finally:
+        restore()
+
+
+def test_assistant_remember_and_home_routes():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        app = _assistant(tmp, {"route": "remember", "answer": "", "fact": {"child": "Dana", "key": "קוד שער", "value": "4321"}})
+        app.on_webhook("e", _dm("תזכרי שהקוד לשער 4321"), {})
+        app.fire_timers()
+        facts = json.load(open(os.path.join(tmp, "facts.json"), encoding="utf-8"))["facts"]
+        assert facts[0]["value"] == "4321" and facts[0]["source"] == "chat:Parent" and sent[-1][1]["text"].startswith("שמרתי")
+        app2 = _assistant(tempfile.mkdtemp(), {"route": "home", "answer": ""})
+        app2.on_webhook("e", _dm("תכבי את האור במטבח"), {})
+        app2.fire_timers()
+        conv = [d for s, d in app2.calls if s == "conversation/process"][0]["service_data"]
+        assert conv["agent_id"] == "conversation.agent" and conv["text"] == "תכבי את האור במטבח" and sent[-1][1]["text"] == "כיביתי את האור"
+        app3 = _assistant(tempfile.mkdtemp(), {"route": "home", "answer": ""}, extra={"home_agent": None})
+        app3.on_webhook("e", _dm("תדליקי אור"), {})
+        app3.fire_timers()
+        assert "לא פעילה" in sent[-1][1]["text"]
+    finally:
+        restore()
+
+
+def test_assistant_dry_run_and_rate_limit():
+    sent, restore = _capture_whatsapp()
+    try:
+        tmp = tempfile.mkdtemp()
+        app = _assistant(tmp, {"route": "school", "answer": "x"}, reply=False)
+        app.on_webhook("e", _dm("שאלה"), {})
+        app.fire_timers()
+        assert sent == []
+        logf = [f for f in os.listdir(os.path.join(tmp, "assistant")) if f.endswith(".jsonl")][0]
+        log = [json.loads(l) for l in open(os.path.join(tmp, "assistant", logf), encoding="utf-8")]
+        assert log[0]["q"] == "שאלה" and log[0]["replied"] is False
+        app2 = _assistant(tempfile.mkdtemp(), {"route": "school", "answer": "x"}, extra={"rate_limit_per_hour": 1})
+        app2.on_webhook("e", _dm("1"), {})
+        app2.on_webhook("e", _dm("2"), {})
+        app2.on_webhook("e", _dm("3"), {})
+        app2.fire_timers()
+        texts = [d["text"] for _, d in sent]
+        assert texts.count("x") == 1 and sum("הרבה שאלות" in t for t in texts) == 1
+    finally:
+        restore()

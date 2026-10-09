@@ -1,0 +1,60 @@
+{
+ "route": {
+  "required": true,
+  "selector": {
+   "select": {
+    "options": [
+     "school",
+     "remember",
+     "home",
+     "smalltalk"
+    ]
+   }
+  }
+ },
+ "answer": {
+  "selector": {
+   "text": {
+    "multiline": true
+   }
+  }
+ },
+ "fact": {
+  "selector": {
+   "object": {
+    "fields": {
+     "child": {
+      "selector": {
+       "select": {
+        "options": [
+         "{CHILD_OPTIONS_LIST}"
+        ]
+       }
+      }
+     },
+     "key": {
+      "selector": {
+       "text": {}
+      }
+     },
+     "value": {
+      "selector": {
+       "text": {}
+      }
+     }
+    }
+   }
+  }
+ },
+ "confidence": {
+  "selector": {
+   "select": {
+    "options": [
+     "high",
+     "medium",
+     "low"
+    ]
+   }
+  }
+ }
+}

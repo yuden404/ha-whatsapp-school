@@ -46,5 +46,13 @@
  "morning_today": "📌 להיום",
  "morning_new": "🌙 חדש מהלילה",
  "summary_failed": "⚠️ סיכום וואטסאפ נכשל — {n} הודעות נשארו בתור וינותחו בסיכום הבא.",
- "daily_title_tomorrow": "{pre}🎒 {kid} — מחר, יום {weekday} {date}"
+ "daily_title_tomorrow": "{pre}🎒 {kid} — מחר, יום {weekday} {date}",
+ "import_done": "✅ {group}: יובאו {n} הודעות חדשות מ-{first} עד {last} ({dup} כבר היו), נמצאו {facts} עובדות חדשות.",
+ "import_unknown": "❓ לא זיהיתי לאיזו קבוצה שייך הקובץ \"{name}\". הוא נשמר, ואפשר לשייך אותו ידנית.",
+ "import_bad": "⚠️ הקובץ \"{name}\" לא נראה כמו ייצוא צ'אט של וואטסאפ.",
+ "assistant_home_off": "שליטה בבית עוד לא פעילה כאן.",
+ "assistant_home_failed": "הבית לא ענה. נסו שוב בעוד רגע.",
+ "assistant_saved": "שמרתי: {key} — {value}.",
+ "assistant_busy": "רגע, הרבה שאלות בבת אחת. אפשר לנסות שוב בעוד כמה דקות.",
+ "assistant_failed": "משהו השתבש אצלי. נסו לשאול שוב."
 }

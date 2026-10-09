@@ -205,7 +205,8 @@ def test_prompts_have_no_unfilled_jinja_and_known_placeholders():
     import re as _re
     pdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prompts")
     allowed = {"FAMILY_INTRO", "TODAY_DMY", "TODAY_WD", "TOMORROW", "GROUP_MAP", "INBOX", "EXISTING", "FILES_NOTE",
-               "SCHOOL_CHILDREN", "NAMES_MENTION", "CHILD_OPTIONS", "OUTPUT_LANGUAGE", "TODAY", "N", "FILE_MAP"}
+               "SCHOOL_CHILDREN", "NAMES_MENTION", "CHILD_OPTIONS", "OUTPUT_LANGUAGE", "TODAY", "N", "FILE_MAP",
+               "FACTS_RULES", "FACT_KEYS", "WHO", "TODAY_WD", "TOMORROW_WD", "CONTEXT", "HISTORY", "QUESTION"}
     for fn in os.listdir(pdir):
         if fn.endswith(".md"):
             with open(os.path.join(pdir, fn), encoding="utf-8") as fh:
@@ -348,3 +349,84 @@ def test_daily_message_tomorrow_title():
     m = c.daily_message("דנה", "2026-10-07", e, [], True, True, tomorrow=True)
     assert m["title"] == "🎒 דנה — מחר, יום רביעי 7.10"
     assert c.daily_message("דנה", "2026-10-07", e, [], True, True)["title"] == "🎒 דנה — יום רביעי 7.10"
+
+
+
+# --- facts memory
+def test_merge_facts_add_bump_supersede():
+    f = c.merge_facts([], [{"child": "דנה", "key": "קוד שער", "value": "1234", "evidence": "הקוד 1234"}], "2026-10-01", "summary")
+    assert len(f) == 1 and f[0]["id"] == "f1" and f[0]["active"]
+    f = c.merge_facts(f, [{"child": "דנה", "key": "קוד  שער", "value": "1234"}], "2026-10-05")       # same fact, spacing differs
+    assert len(f) == 1 and f[0]["last_seen"] == "2026-10-05"
+    f = c.merge_facts(f, [{"child": "דנה", "key": "קוד שער", "value": "5678"}], "2026-10-09")
+    act = c.active_facts(f)
+    assert len(f) == 2 and len(act) == 1 and act[0]["value"] == "5678" and f[0]["superseded_by"] == "f2"
+
+
+def test_merge_facts_ignores_empty_and_keeps_children_apart():
+    f = c.merge_facts([], [{"child": "דנה", "key": "", "value": "x"}, {"child": "דנה", "key": "k", "value": ""},
+                           {"child": "דנה", "key": "ועד", "value": "א"}, {"child": "רון", "key": "ועד", "value": "ב"}], "2026-10-01")
+    assert [(x["child"], x["value"]) for x in c.active_facts(f)] == [("דנה", "א"), ("רון", "ב")]
+    assert c.fact_keys_for_prompt(f) == "- דנה: ועד\n- רון: ועד\n"
+
+
+def test_merge_facts_cap():
+    many = [{"child": "דנה", "key": f"k{i}", "value": "v"} for i in range(c.MAX_ACTIVE_FACTS + 5)]
+    f = c.merge_facts([], many, "2026-10-01")
+    assert len(c.active_facts(f)) == c.MAX_ACTIVE_FACTS
+
+
+def test_json_file_store_and_archive_path():
+    import tempfile
+    import wa_store
+    d = tempfile.mkdtemp()
+    js = wa_store.JsonFile(os.path.join(d, "facts.json"), {"facts": []})
+    assert js.read() == {"facts": []}
+    js.update(lambda x: {"facts": x["facts"] + [1]})
+    assert js.read() == {"facts": [1]}
+    assert wa_store.archive_path(d, 1791000000).endswith("archive/2026-10.jsonl")
+
+
+# --- chat exports
+def test_parse_export_ios_hebrew():
+    txt = ("\u200e[24.9.2026, 17:20:25] דנה כהן: שלום לכולם\nשורה שנייה\n"
+           "[24.9.2026, 17:21:02] \u200eמיכל: \u200e<המדיה הושמטה>\n"
+           "[25.9.2026, 08:00:00] מיכל: הודעה זו נמחקה\n"
+           "\u200e[25.9.2026, 08:01:00] רון הוסיף את דני\n"
+           "[25.9.2026, 08:02:10] רון: הקוד לשער: 1234")
+    r = c.parse_whatsapp_export(txt)
+    assert [(x["d"], x["mo"], x["h"], x["mi"], x["sender"], x["text"], x["media"]) for x in r] == [
+        (24, 9, 17, 20, "דנה כהן", "שלום לכולם\nשורה שנייה", False), (24, 9, 17, 21, "מיכל", "[מדיה]", True),
+        (25, 9, 8, 2, "רון", "הקוד לשער: 1234", False)]
+
+
+def test_parse_export_android_us_and_names():
+    r = c.parse_whatsapp_export("9/24/26, 5:20 PM - Dana: hello\n9/25/26, 8:02 AM - Ron: x")
+    assert [(x["d"], x["mo"], x["y"], x["h"]) for x in r] == [(24, 9, 2026, 17), (25, 9, 2026, 8)]
+    assert c.export_group_name("\u200eWhatsApp Chat - כיתה א׳ הורים.zip") == "כיתה א׳ הורים"
+    assert c.match_group_by_name("כיתה א׳ הורים", {"1": "כיתה א׳ הורים", "2": "כיתה א׳ (בית ספר)"}) == "1"
+    assert c.match_group_by_name("גן", {"1": "גן א", "2": "גן ב"}) == ""   # ambiguous -> no guess
+
+
+def test_match_by_content_needs_a_clear_winner():
+    arch = {"1": {c.norm("הודעה ראשונה ארוכה")[:60], c.norm("עוד הודעה ארוכה")[:60], c.norm("והודעה שלישית ארוכה")[:60]}, "2": set()}
+    assert c.match_group_by_content(["הודעה ראשונה ארוכה", "עוד הודעה ארוכה", "והודעה שלישית ארוכה"], arch)[0] == "1"
+    assert c.match_group_by_content(["משהו אחר לגמרי כאן"], arch)[0] == ""
+
+
+
+# --- assistant context
+def test_keep_newest_drops_oldest():
+    assert c.keep_newest(["aaaa\n", "bbbb\n", "cccc\n"], 11) == ["bbbb\n", "cccc\n"]
+
+
+def test_build_context_sections():
+    facts = [{"child": "דנה", "key": "קוד שער", "value": "1234", "last_seen": "2026-10-01", "active": True},
+             {"child": "דנה", "key": "קוד שער", "value": "0000", "active": False}]
+    plans = {"kid_a": {"start": "2026-10-04", "end": "2026-10-09", "days": [
+        {"date": "2026-10-05", "lessons": ["שעה 1: חשבון"], "bring": ["סרגל"], "notes": [], "hours": ""}]}}
+    ctx = c.build_context(facts, plans, {"kid_a": "דנה"}, [{"summary": "דנה — כובע", "due": "2026-10-05"}],
+                          [{"start": "2026-10-08T12:00:00", "summary": "טקס"}], ["[01.10 10:00] כיתה | T: שלום\n"], "2026-10-05")
+    assert "- דנה | קוד שער: 1234" in ctx and "0000" not in ctx
+    assert "## דנה (2026-10-04 – 2026-10-09)" in ctx and "← today" in ctx and "bring: סרגל" in ctx
+    assert "- 2026-10-05: דנה — כובע" in ctx and "טקס" in ctx and ctx.endswith("[01.10 10:00] כיתה | T: שלום\n")
